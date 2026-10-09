@@ -12,26 +12,25 @@ jobs:
   run-emag-toggle:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Instalare Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
 
       - name: Instalare Puppeteer
         run: npm install puppeteer
 
-      - name: Executare Pornire (Ora 18:00)
-        if: github.event.schedule == '0 15 * * *' || github.event_name == 'workflow_dispatch'
+      - name: Executare Toggle
         run: node emag_toggle.js START
         env:
           EMAG_USER: ${{ secrets.EMAG_USER }}
           EMAG_PASS: ${{ secrets.EMAG_PASS }}
 
-      - name: Executare Oprire (Ora 01:00)
-        if: github.event.schedule == '0 22 * * *'
-        run: node emag_toggle.js PAUSE
-        env:
-          EMAG_USER: ${{ secrets.EMAG_USER }}
-          EMAG_PASS: ${{ secrets.EMAG_PASS }}
+      - name: Salvare Screenshot daca esueaza
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-screenshot
+          path: error.png
