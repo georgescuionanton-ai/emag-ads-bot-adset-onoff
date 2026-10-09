@@ -26,32 +26,48 @@ const ACTION = process.argv[2] || 'START';
 
         console.log(`2. URL curent dupa incarcare: ${page.url()}`);
 
-        // Verificam daca am fost redirectionati la pagina de Login
         if (page.url().includes('auth.emag.net') || page.url().includes('login')) {
             console.log("3. Pagina de login detectata pe auth.emag.net. Autentificare...");
 
-            // Asteptam campul de email/username
-            const emailSelector = 'input[type="email"], input[name="email"], input[name="_username"], #username, #email, input[name="username"]';
-            await page.waitForSelector(emailSelector, { timeout: 15000 });
-            await page.type(emailSelector, EMAIL);
+            await page.waitForSelector('input', { timeout: 15000 });
 
-            // Asteptam campul de parola
-            const passSelector = 'input[type="password"], input[name="password"], input[name="_password"], #password';
-            await page.waitForSelector(passSelector, { timeout: 15000 });
-            await page.type(passSelector, PASSWORD);
+            // Completare login nativ prin JS
+            const loginSuccess = await page.evaluate((email, pass) => {
+                const userInputs = Array.from(document.querySelectorAll('input'));
+                const emailInput = userInputs.find(i => i.type === 'email' || i.name === 'email' || i.name === 'username' || i.id === 'username' || i.id === 'email' || i.type === 'text');
+                const passInput = userInputs.find(i => i.type === 'password' || i.name === 'password' || i.id === 'password');
 
-            // Apasam butonul de submit
-            const submitBtnSelector = 'button[type="submit"], input[type="submit"], .btn-primary, button';
-            await Promise.all([
-                page.click(submitBtnSelector),
-                page.waitForNavigation({ waitUntil: 'networkidle2' }).catch(() => {})
-            ]);
+                if (emailInput) {
+                    emailInput.value = email;
+                    emailInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    emailInput.dispatchEvent(new Event('change', { bubbles: true }));
+                }
 
-            console.log("4. Autentificare trimisa. Asteptare redirectionare...");
-            await new Promise(r => setTimeout(r, 5000));
+                if (passInput) {
+                    passInput.value = pass;
+                    passInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    passInput.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+
+                const submitBtn = document.querySelector('button[type="submit"], input[type="submit"], button.btn-primary, button');
+                if (submitBtn) {
+                    submitBtn.click();
+                    return true;
+                }
+                
+                const form = document.querySelector('form');
+                if (form) {
+                    form.submit();
+                    return true;
+                }
+
+                return false;
+            }, EMAIL, PASSWORD);
+
+            console.log(`4. Formular trimis (status: ${loginSuccess}). Asteptare redirectionare...`);
+            await new Promise(r => setTimeout(r, 6000));
         }
 
-        // Navigare explicita catre campanie dupa login
         if (!page.url().includes('632815')) {
             console.log("5. Navighez catre pagina campaniei...");
             await page.goto(TARGET_URL, { waitUntil: 'networkidle2' });
