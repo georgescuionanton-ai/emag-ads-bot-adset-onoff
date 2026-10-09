@@ -2,9 +2,14 @@ name: eMAG Ads Auto Scheduler
 
 on:
   schedule:
-    - cron: '0 15 * * *'
-    - cron: '0 22 * * *'
+    - cron: '0 15,16 * * *'   # acopera 18:00 RO vara si iarna
+    - cron: '0 22,23 * * *'   # acopera 01:00 RO vara si iarna
   workflow_dispatch:
+    inputs:
+      action:
+        type: choice
+        options: [START, PAUSE]
+        default: START
 
 jobs:
   run-emag-toggle:
@@ -12,21 +17,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Instalare Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Instalare Puppeteer
-        run: npm install puppeteer
+      - run: npm install puppeteer
 
-      - name: Executare Toggle
-        run: node emag_toggle.js START
+      - name: Decide actiunea dupa ora Bucuresti
+        id: act
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "action=${{ inputs.action }}" >> $GITHUB_OUTPUT
+          else
+            H=$(TZ=Europe/Bucharest date +%H)
+            if [ "$H" = "18" ]; then echo "action=START" >> $GITHUB_OUTPUT
+            elif [ "$H" = "01" ]; then echo "action=PAUSE" >> $GITHUB_OUTPUT
+            else echo "action=NONE" >> $GITHUB_OUTPUT; fi
+          fi
+
+      - name: Executare
+        if: steps.act.outputs.action != 'NONE'
+        run: node emag_toggle.js ${{ steps.act.outputs.action }}
         env:
           EMAG_USER: ${{ secrets.EMAG_USER }}
           EMAG_PASS: ${{ secrets.EMAG_PASS }}
 
-      - name: Salvare Screenshots (la esec sau succes)
+      - name: Salvare screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
