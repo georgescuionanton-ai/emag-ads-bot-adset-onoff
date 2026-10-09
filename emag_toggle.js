@@ -24,52 +24,39 @@ const ACTION = process.argv[2] || 'START';
         await page.goto(TARGET_URL, { waitUntil: 'networkidle2' });
         await new Promise(r => setTimeout(r, 3000));
 
-        console.log(`2. URL curent dupa incarcare: ${page.url()}`);
-
         if (page.url().includes('auth.emag.net') || page.url().includes('login')) {
-            console.log("3. Pagina de login detectata pe auth.emag.net. Autentificare...");
+            console.log("2. Pagina de login detectata. Incepem autentificarea pas cu pas...");
 
-            await page.waitForSelector('input', { timeout: 15000 });
+            // Pasul 1: Introducere Email
+            const emailInput = await page.waitForSelector('input[type="email"], input[name="email"], input[name="username"], #username, #email', { timeout: 15000 });
+            await emailInput.click({ clickCount: 3 });
+            await emailInput.type(EMAIL, { delay: 50 });
+            await new Promise(r => setTimeout(r, 1000));
 
-            // Completare login nativ prin JS
-            const loginSuccess = await page.evaluate((email, pass) => {
-                const userInputs = Array.from(document.querySelectorAll('input'));
-                const emailInput = userInputs.find(i => i.type === 'email' || i.name === 'email' || i.name === 'username' || i.id === 'username' || i.id === 'email' || i.type === 'text');
-                const passInput = userInputs.find(i => i.type === 'password' || i.name === 'password' || i.id === 'password');
+            // Apasam Enter sau butonul de Next/Submit pentru pasul 1
+            await page.keyboard.press('Enter');
+            await new Promise(r => setTimeout(r, 2500));
 
-                if (emailInput) {
-                    emailInput.value = email;
-                    emailInput.dispatchEvent(new Event('input', { bubbles: true }));
-                    emailInput.dispatchEvent(new Event('change', { bubbles: true }));
-                }
+            // Pasul 2: Introducere Parola (daca exista campul de parola)
+            const passInput = await page.$('input[type="password"], input[name="password"], #password');
+            if (passInput) {
+                console.log("3. Introducere parola...");
+                await passInput.click({ clickCount: 3 });
+                await passInput.type(PASSWORD, { delay: 50 });
+                await new Promise(r => setTimeout(r, 1000));
+                await page.keyboard.press('Enter');
+            } else {
+                console.log("3. Cautam butonul de continuare/login...");
+                const submitBtn = await page.$('button[type="submit"], input[type="submit"], button.btn-primary, button');
+                if (submitBtn) await submitBtn.click();
+            }
 
-                if (passInput) {
-                    passInput.value = pass;
-                    passInput.dispatchEvent(new Event('input', { bubbles: true }));
-                    passInput.dispatchEvent(new Event('change', { bubbles: true }));
-                }
-
-                const submitBtn = document.querySelector('button[type="submit"], input[type="submit"], button.btn-primary, button');
-                if (submitBtn) {
-                    submitBtn.click();
-                    return true;
-                }
-                
-                const form = document.querySelector('form');
-                if (form) {
-                    form.submit();
-                    return true;
-                }
-
-                return false;
-            }, EMAIL, PASSWORD);
-
-            console.log(`4. Formular trimis (status: ${loginSuccess}). Asteptare redirectionare...`);
-            await new Promise(r => setTimeout(r, 6000));
+            console.log("4. Asteptare autentificare si redirectionare...");
+            await new Promise(r => setTimeout(r, 7000));
         }
 
         if (!page.url().includes('632815')) {
-            console.log("5. Navighez catre pagina campaniei...");
+            console.log("5. Re-navighez catre pagina campaniei...");
             await page.goto(TARGET_URL, { waitUntil: 'networkidle2' });
             await new Promise(r => setTimeout(r, 5000));
         }
