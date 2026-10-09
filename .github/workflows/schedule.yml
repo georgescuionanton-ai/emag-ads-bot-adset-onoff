@@ -2,9 +2,7 @@ name: eMAG Ads Auto Scheduler
 
 on:
   schedule:
-    # Ora 18:00 (România) = 15:00 UTC
     - cron: '0 15 * * *'
-    # Ora 01:00 (România) = 22:00 UTC
     - cron: '0 22 * * *'
   workflow_dispatch:
 
@@ -28,9 +26,10 @@ jobs:
           EMAG_USER: ${{ secrets.EMAG_USER }}
           EMAG_PASS: ${{ secrets.EMAG_PASS }}
 
-      - name: Salvare Screenshot daca esueaza
-        if: failure()
+      - name: Salvare Screenshots (la esec sau succes)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: error-screenshot
-          path: error.png
+          name: debug-screenshots
+          path: '*.png'
+          if-no-files-found: ignore
