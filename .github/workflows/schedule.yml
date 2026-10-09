@@ -2,11 +2,11 @@ name: eMAG Ads Auto Scheduler
 
 on:
   schedule:
-    - cron: '5 15,16 * * *'    # ~18:05 RO (pornire)
-    - cron: '35 15,16 * * *'   # ~18:35 RO (rezerva)
-    - cron: '5 23,0 * * *'     # ~02:05 RO (oprire)
-    - cron: '35 23,0 * * *'    # ~02:35 RO (rezerva)
-    - cron: '5 1,2 * * *'      # ~04:05 RO (rezerva tarzie)
+    # Cron-urile sunt in UTC; orele duble acopera ora de vara si de iarna.
+    - cron: '5,35 11,12 * * *'   # ~14:05 / 14:35 RO (start weekend)
+    - cron: '5,35 15,16 * * *'   # ~18:05 / 18:35 RO (start zile lucratoare)
+    - cron: '5,35 22,23 * * *'   # ~01:05 / 01:35 RO (oprire)
+    - cron: '5 0,1 * * *'        # ~03:05 RO (rezerva oprire)
   workflow_dispatch:
     inputs:
       action:
@@ -26,7 +26,7 @@ jobs:
 
       - run: npm install puppeteer
 
-      - name: Decide actiunea dupa ora Bucuresti
+      - name: Decide actiunea dupa ziua si ora Bucuresti
         id: act
         run: |
           MODE="${{ github.event_name == 'workflow_dispatch' && inputs.action || 'AUTO' }}"
@@ -34,11 +34,14 @@ jobs:
             echo "action=$MODE" >> $GITHUB_OUTPUT
           else
             H=$(TZ=Europe/Bucharest date +%-H)
-            if [ "$H" -ge 18 ] || [ "$H" -lt 2 ]; then
+            D=$(TZ=Europe/Bucharest date +%u)   # 1=luni ... 7=duminica
+            if [ "$D" -ge 6 ]; then START_H=14; else START_H=18; fi
+            if [ "$H" -ge "$START_H" ] || [ "$H" -lt 1 ]; then
               echo "action=START" >> $GITHUB_OUTPUT
             else
               echo "action=PAUSE" >> $GITHUB_OUTPUT
             fi
+            echo "Ziua=$D Ora=$H StartH=$START_H"
           fi
 
       - name: Executare
