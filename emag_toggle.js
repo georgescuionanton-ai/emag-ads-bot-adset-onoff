@@ -21,41 +21,46 @@ const ACTION = process.argv[2] || 'START';
         page.setDefaultNavigationTimeout(60000);
 
         console.log(`1. Accesez URL: ${TARGET_URL}`);
-        await page.goto(TARGET_URL, { waitUntil: 'domcontentloaded' });
-        await new Promise(r => setTimeout(r, 4000));
+        await page.goto(TARGET_URL, { waitUntil: 'networkidle2' });
+        await new Promise(r => setTimeout(r, 3000));
 
         console.log(`2. URL curent dupa incarcare: ${page.url()}`);
 
-        // Verificare si completare Login
-        const emailInput = await page.$('input[type="email"], input[name="email"], input[name="username"], #username, #email');
-        if (emailInput) {
-            console.log("3. Formular de login detectat. Autentificare...");
-            await emailInput.type(EMAIL);
+        // Verificam daca am fost redirectionati la pagina de Login
+        if (page.url().includes('auth.emag.net') || page.url().includes('login')) {
+            console.log("3. Pagina de login detectata pe auth.emag.net. Autentificare...");
 
-            const passInput = await page.$('input[type="password"], input[name="password"], #password');
-            if (passInput) {
-                await passInput.type(PASSWORD);
-            }
+            // Asteptam campul de email/username
+            const emailSelector = 'input[type="email"], input[name="email"], input[name="_username"], #username, #email, input[name="username"]';
+            await page.waitForSelector(emailSelector, { timeout: 15000 });
+            await page.type(emailSelector, EMAIL);
 
-            const submitBtn = await page.$('button[type="submit"], input[type="submit"], .btn-primary, button.btn');
-            if (submitBtn) {
-                await Promise.all([
-                    submitBtn.click(),
-                    page.waitForNavigation({ waitUntil: 'domcontentloaded' }).catch(() => {})
-                ]);
-            }
+            // Asteptam campul de parola
+            const passSelector = 'input[type="password"], input[name="password"], input[name="_password"], #password';
+            await page.waitForSelector(passSelector, { timeout: 15000 });
+            await page.type(passSelector, PASSWORD);
+
+            // Apasam butonul de submit
+            const submitBtnSelector = 'button[type="submit"], input[type="submit"], .btn-primary, button';
+            await Promise.all([
+                page.click(submitBtnSelector),
+                page.waitForNavigation({ waitUntil: 'networkidle2' }).catch(() => {})
+            ]);
+
+            console.log("4. Autentificare trimisa. Asteptare redirectionare...");
             await new Promise(r => setTimeout(r, 5000));
-            console.log(`4. URL dupa trimitere login: ${page.url()}`);
         }
 
-        // Daca nu suntem pe pagina campaniei, mai facem o navigare directa
+        // Navigare explicita catre campanie dupa login
         if (!page.url().includes('632815')) {
-            console.log("5. Re-navighez catre pagina campaniei...");
+            console.log("5. Navighez catre pagina campaniei...");
             await page.goto(TARGET_URL, { waitUntil: 'networkidle2' });
-            await new Promise(r => setTimeout(r, 4000));
+            await new Promise(r => setTimeout(r, 5000));
         }
 
-        console.log("6. Caut ad set-ul in pagina...");
+        console.log(`6. URL final campanie: ${page.url()}`);
+
+        console.log("7. Caut ad set-ul in pagina...");
         const result = await page.evaluate((adSetName, action) => {
             const bodyText = document.body.innerText;
             if (!bodyText.includes(adSetName)) {
@@ -85,7 +90,7 @@ const ACTION = process.argv[2] || 'START';
             return { success: true, message: `Ad set-ul este deja in starea ceruta (${isChecked ? 'Activ' : 'Inactiv'}).` };
         }, TARGET_ADSET, ACTION);
 
-        console.log(`7. REZULTAT: ${result.message || result.reason}`);
+        console.log(`8. REZULTAT: ${result.message || result.reason}`);
         
         if (!result.success) {
             await page.screenshot({ path: 'error.png', fullPage: true });
