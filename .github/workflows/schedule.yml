@@ -3,8 +3,7 @@ name: eMAG Ads Auto Scheduler
 on:
   schedule:
     # Cron-urile sunt in UTC; orele duble acopera ora de vara si de iarna.
-    - cron: '5,35 11,12 * * *'   # ~14:05 / 14:35 RO (start weekend)
-    - cron: '5,35 15,16 * * *'   # ~18:05 / 18:35 RO (start zile lucratoare)
+    - cron: '35,50 15,16 * * *'  # ~18:35 / 18:50 RO (start, in fiecare zi)
     - cron: '5,35 22,23 * * *'   # ~01:05 / 01:35 RO (oprire)
     - cron: '5 0,1 * * *'        # ~03:05 RO (rezerva oprire)
   workflow_dispatch:
@@ -33,15 +32,17 @@ jobs:
           if [ "$MODE" != "AUTO" ]; then
             echo "action=$MODE" >> $GITHUB_OUTPUT
           else
-            H=$(TZ=Europe/Bucharest date +%-H)
-            D=$(TZ=Europe/Bucharest date +%u)   # 1=luni ... 7=duminica
-            if [ "$D" -ge 6 ]; then START_H=14; else START_H=18; fi
-            if [ "$H" -ge "$START_H" ] || [ "$H" -lt 1 ]; then
+            read H M D < <(TZ=Europe/Bucharest date '+%-H %-M %u')   # D: 1=luni ... 7=duminica
+            NOW=$((H * 60 + M))                                      # minute de la miezul noptii
+            START=$((18 * 60 + 30))                                  # 18:30 in fiecare zi
+            # Pentru alta ora in weekend, decomenteaza linia de mai jos (ex. 17:00):
+            # if [ "$D" -ge 6 ]; then START=$((17 * 60)); fi
+            if [ "$NOW" -ge "$START" ] || [ "$H" -lt 1 ]; then
               echo "action=START" >> $GITHUB_OUTPUT
             else
               echo "action=PAUSE" >> $GITHUB_OUTPUT
             fi
-            echo "Ziua=$D Ora=$H StartH=$START_H"
+            echo "Ziua=$D Ora=$H:$M Start=$((START / 60)):$((START % 60))"
           fi
 
       - name: Executare
