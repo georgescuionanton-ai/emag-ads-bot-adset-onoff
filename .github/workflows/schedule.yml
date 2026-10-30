@@ -6,6 +6,11 @@ on:
     - cron: '35,50 15,16 * * *'  # ~18:35 / 18:50 RO (start, in fiecare zi)
     - cron: '5,35 22,23 * * *'   # ~01:05 / 01:35 RO (oprire)
     - cron: '5 0,1 * * *'        # ~03:05 RO (rezerva oprire)
+    # Fereastra larga / BF: START ~10:00 RO (UTC+3 → 07:xx, UTC+2 → 08:xx)
+    - cron: '35 7 * * *'         # ~10:35 RO vara (UTC+3) / ~09:35 RO iarna
+    - cron: '5,35 8 * * *'       # ~10:05+ RO iarna (UTC+2); backup vara
+    # BF (6 nov) + rezerva diurna: START pe timpul zilei (in afara BF decide() → PAUSE, inofensiv)
+    - cron: '5 9,11 * * *'       # ~12:05 / 14:05 RO vara; ~11:05 / 13:05 RO iarna
   workflow_dispatch:
     inputs:
       action:
@@ -28,21 +33,15 @@ jobs:
       - name: Decide actiunea dupa ziua si ora Bucuresti
         id: act
         run: |
+          # Reguli detaliate (BF, fereastra larga, weekend): vezi decide_action.js (comentarii RO).
           MODE="${{ github.event_name == 'workflow_dispatch' && inputs.action || 'AUTO' }}"
           if [ "$MODE" != "AUTO" ]; then
             echo "action=$MODE" >> $GITHUB_OUTPUT
+            echo "Mod manual: $MODE"
           else
-            read H M D < <(TZ=Europe/Bucharest date '+%-H %-M %u')   # D: 1=luni ... 7=duminica
-            NOW=$((H * 60 + M))                                      # minute de la miezul noptii
-            START=$((18 * 60 + 30))                                  # 18:30 in fiecare zi
-            # Pentru alta ora in weekend, decomenteaza linia de mai jos (ex. 17:00):
-            # if [ "$D" -ge 6 ]; then START=$((17 * 60)); fi
-            if [ "$NOW" -ge "$START" ] || [ "$H" -lt 1 ]; then
-              echo "action=START" >> $GITHUB_OUTPUT
-            else
-              echo "action=PAUSE" >> $GITHUB_OUTPUT
-            fi
-            echo "Ziua=$D Ora=$H:$M Start=$((START / 60)):$((START % 60))"
+            ACTION=$(node decide_action.js)
+            echo "action=$ACTION" >> $GITHUB_OUTPUT
+            echo "AUTO → $ACTION  ($(TZ=Europe/Bucharest date '+%Y-%m-%d %H:%M %Z'))"
           fi
 
       - name: Executare
