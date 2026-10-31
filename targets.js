@@ -18,4 +18,10 @@ module.exports = [
     url: 'https://advertising.emag.net/campaign-manager/652949',
     adSet: 'first', // AUTO cartuse (campanie NOD_Canon_auto_cartuse_nov26-ian27, ad group 731421); start 2026-11-01
   },
+  {
+    // Product & Category (NOD_Canon_manual_product_category_nov26); 2026-11-01 .. 2026-11-30
+    // IMPORTANT: nume exact — campania mai are 5 ad set-uri vechi (cartuse) pauzate; NU folosi 'first'.
+    url: 'https://advertising.emag.net/campaign-manager/634320',
+    adSet: 'Canon printere vs competitori',
+  },
 ];
