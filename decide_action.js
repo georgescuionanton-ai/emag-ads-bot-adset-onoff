@@ -7,12 +7,15 @@
  * Implicit (din 2026-11-16 incolo, si in afara ferestrelor de mai jos):
  *   START de la 18:30, PAUSE dupa 01:00 (in fiecare zi).
  *
- * Fereastra larga — START de la 10:00 in loc de 18:30 (PAUSE tot dupa 01:00):
- *   2026-11-01 .. 2026-11-05  si  2026-11-07 .. 2026-11-15  (date Bucuresti)
+ * Fereastra larga — pornit doar in doua intervale (date Bucuresti):
+ *   2026-11-02 .. 2026-11-05  si  2026-11-07 .. 2026-11-15
+ *   START cand 11:00 <= ora < 14:00, sau ora >= 19:00, sau ora < 01:00;
+ *   PAUSE in rest (inainte de 11:00, 14:00–19:00, si de la 01:00).
  *
- * Exceptie Black Friday — mereu START:
+ * Exceptie Black Friday — mereu START (are prioritate fata de fereastra larga):
  *   de la 2026-11-05 18:30 pana la 2026-11-07 01:00 (Europe/Bucharest)
- *   (toata ziua de 6 nov ramane pornita, inclusiv rulari diurne)
+ *   (toata ziua de 6 nov ramane pornita, inclusiv rulari diurne;
+ *    pe 5 nov, de la 18:30, BF acopera pauza 14:00–19:00)
  *
  * Weekend: pentru alta ora de start, decomenteaza WEEKEND_START de mai jos
  *   (ex. 17:00 sambata/duminica).
@@ -22,12 +25,15 @@
 
 // --- configurare usoara ---
 const DEFAULT_START_MIN = 18 * 60 + 30; // 18:30
-const WIDE_START_MIN = 10 * 60;         // 10:00 in fereastra larga
-const PAUSE_AFTER_HOUR = 1;             // PAUSE de la 01:00 incolo (H >= 1, in afara ferestrei de start)
+// Fereastra larga: [11:00, 14:00) si [19:00, 01:00)
+const WIDE_AM_START_MIN = 11 * 60;      // 11:00 inclusiv
+const WIDE_AM_END_MIN = 14 * 60;        // 14:00 exclusiv
+const WIDE_PM_START_MIN = 19 * 60;      // 19:00 inclusiv
+const PAUSE_AFTER_HOUR = 1;             // PAUSE de la 01:00 (H >= 1, in afara ferestrelor de start)
 
 // Fereastra larga (an, luna, zi) — date calendaristice Bucuresti
 const WIDE_RANGES = [
-  { y: 2026, m: 11, from: 1, to: 5 },
+  { y: 2026, m: 11, from: 2, to: 5 },
   { y: 2026, m: 11, from: 7, to: 15 },
 ];
 
@@ -61,13 +67,19 @@ function decide(p) {
   // 1) Exceptie Black Friday — mereu START
   if (ts >= BF_START && ts < BF_END) return 'START';
 
-  // 2) Ora de start: fereastra larga sau default
-  let startMin = isWideDay(y, m, d) ? WIDE_START_MIN : DEFAULT_START_MIN;
+  // Weekend (optional): inlocuieste ora de start, inclusiv in fereastra larga
+  const weekendOverride = WEEKEND_START_MIN != null && D >= 6;
 
-  // Weekend (optional)
-  if (WEEKEND_START_MIN != null && D >= 6) startMin = WEEKEND_START_MIN;
+  // 2) Fereastra larga: [11:00, 14:00) U [19:00, 24:00) U [00:00, 01:00)
+  if (isWideDay(y, m, d) && !weekendOverride) {
+    const inMorning = NOW >= WIDE_AM_START_MIN && NOW < WIDE_AM_END_MIN;
+    const inEvening = NOW >= WIDE_PM_START_MIN || H < PAUSE_AFTER_HOUR;
+    if (inMorning || inEvening) return 'START';
+    return 'PAUSE';
+  }
 
-  // 3) Fereastra zilnica: [startMin, 24:00) U [00:00, PAUSE_AFTER_HOUR:00)
+  // 3) Implicit (sau weekend, daca e setat): [startMin, 24:00) U [00:00, 01:00)
+  const startMin = weekendOverride ? WEEKEND_START_MIN : DEFAULT_START_MIN;
   if (NOW >= startMin || H < PAUSE_AFTER_HOUR) return 'START';
   return 'PAUSE';
 }
