@@ -2,15 +2,23 @@ name: eMAG Ads Auto Scheduler
 
 on:
   schedule:
-    # Cron-urile sunt in UTC; orele duble acopera ora de vara si de iarna.
-    - cron: '35,50 15,16 * * *'  # ~18:35 / 18:50 RO (start, in fiecare zi)
-    - cron: '5,35 22,23 * * *'   # ~01:05 / 01:35 RO (oprire)
+    # Cron-urile sunt in UTC. In noiembrie 2026 Romania e UTC+2 (EET).
+    # Programul normal (18:30 / 01:00) pastreaza orele duble, ca sa acopere
+    # si ora de vara (UTC+3) dupa ce fereastra larga se termina.
+    # Rulari cazute in afara ferestrei sunt inofensive: decide() → PAUSE.
+
+    # Fereastra larga — START ~11:00–11:05 RO + rezerva ~30 min
+    - cron: '5,35 9 * * *'       # 09:05/09:35 UTC → ~11:05 / ~11:35 RO
+    # Fereastra larga — PAUSE ~14:00–14:05 RO + rezerva ~30 min
+    - cron: '5,35 12 * * *'      # 12:05/12:35 UTC → ~14:05 / ~14:35 RO
+    # Fereastra larga — START ~19:00–19:05 RO + rezerva ~30 min
+    - cron: '5,35 17 * * *'      # 17:05/17:35 UTC → ~19:05 / ~19:35 RO
+
+    # Program normal (din 16 nov): START ~18:35 / ~18:50 RO
+    - cron: '35,50 15,16 * * *'  # iarna 16:35/16:50 UTC; vara 15:35/15:50 UTC
+    # Oprire ~01:05 RO + rezerva ~01:35; inca o rezerva ~03:05
+    - cron: '5,35 22,23 * * *'   # ~01:05 / ~01:35 RO (iarna: 23:xx UTC; vara: 22:xx UTC)
     - cron: '5 0,1 * * *'        # ~03:05 RO (rezerva oprire)
-    # Fereastra larga / BF: START ~10:00 RO (UTC+3 → 07:xx, UTC+2 → 08:xx)
-    - cron: '35 7 * * *'         # ~10:35 RO vara (UTC+3) / ~09:35 RO iarna
-    - cron: '5,35 8 * * *'       # ~10:05+ RO iarna (UTC+2); backup vara
-    # BF (6 nov) + rezerva diurna: START pe timpul zilei (in afara BF decide() → PAUSE, inofensiv)
-    - cron: '5 9,11 * * *'       # ~12:05 / 14:05 RO vara; ~11:05 / 13:05 RO iarna
   workflow_dispatch:
     inputs:
       action:
@@ -33,7 +41,7 @@ jobs:
       - name: Decide actiunea dupa ziua si ora Bucuresti
         id: act
         run: |
-          # Reguli detaliate (BF, fereastra larga, weekend): vezi decide_action.js (comentarii RO).
+          # Reguli detaliate (BF, fereastra larga 11–14 si 19–01, weekend): vezi decide_action.js.
           MODE="${{ github.event_name == 'workflow_dispatch' && inputs.action || 'AUTO' }}"
           if [ "$MODE" != "AUTO" ]; then
             echo "action=$MODE" >> $GITHUB_OUTPUT
