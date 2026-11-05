@@ -2,23 +2,64 @@ name: eMAG Ads Auto Scheduler
 
 on:
   schedule:
-    # Cron-urile sunt in UTC. In noiembrie 2026 Romania e UTC+2 (EET).
-    # Programul normal (18:30 / 01:00) pastreaza orele duble, ca sa acopere
-    # si ora de vara (UTC+3) dupa ce fereastra larga se termina.
-    # Rulari cazute in afara ferestrei sunt inofensive: decide() → PAUSE.
+    # Cron in UTC. Bucuresti: iarna EET = UTC+2 (inclusiv noiembrie 2026),
+    # vara EEST = UTC+3. Orele 11:00 / 14:00 / 19:00 conteaza doar in fereastra
+    # larga din noiembrie (iarna). 18:30 si 01:00 au triggere pentru ambele fusuri.
+    #
+    # GitHub intarzie des rularea cu ~30–55 min si poate pierde o rulare din aceeasi
+    # ora. Pentru fiecare prag exista:
+    #   - ~50 min si ~30 min inainte (la timp reafirma starea curenta; daca vin
+    #     intarziate, aterizeaza imediat dupa prag si aplica starea noua);
+    #   - ~8 min inainte;
+    #   - doua rulari la cateva minute dupa prag;
+    #   - o rezerva in ora UTC urmatoare.
+    # decide_action.js alege START/PAUSE dupa minutul real din Europe/Bucharest,
+    # deci repetarile sunt idempotente.
+    #
+    # Program (neschimbat):
+    #   2–5 si 7–15 nov 2026: [11:00, 14:00) si [19:00, 01:00)
+    #   5 nov 18:30 → 7 nov 01:00: Black Friday, mereu pornit
+    #   din 16 nov 2026: [18:30, 01:00)
 
-    # Fereastra larga — START ~11:00–11:05 RO + rezerva ~30 min
-    - cron: '5,35 9 * * *'       # 09:05/09:35 UTC → ~11:05 / ~11:35 RO
-    # Fereastra larga — PAUSE ~14:00–14:05 RO + rezerva ~30 min
-    - cron: '5,35 12 * * *'      # 12:05/12:35 UTC → ~14:05 / ~14:35 RO
-    # Fereastra larga — START ~19:00–19:05 RO + rezerva ~30 min
-    - cron: '5,35 17 * * *'      # 17:05/17:35 UTC → ~19:05 / ~19:35 RO
+    # --- 11:00 RO START (fereastra larga; iarna UTC+2) ---
+    - cron: '10,30,52 8 * * *'    # 10:10, 10:30, 10:52 RO iarna / 11:10, 11:30, 11:52 vara
+    - cron: '7,17 9 * * *'        # 11:07, 11:17 RO iarna / 12:07, 12:17 vara
+    - cron: '10 10 * * *'         # 12:10 RO iarna / 13:10 vara
 
-    # Program normal (din 16 nov): START ~18:35 / ~18:50 RO
-    - cron: '35,50 15,16 * * *'  # iarna 16:35/16:50 UTC; vara 15:35/15:50 UTC
-    # Oprire ~01:05 RO + rezerva ~01:35; inca o rezerva ~03:05
-    - cron: '5,35 22,23 * * *'   # ~01:05 / ~01:35 RO (iarna: 23:xx UTC; vara: 22:xx UTC)
-    - cron: '5 0,1 * * *'        # ~03:05 RO (rezerva oprire)
+    # --- 14:00 RO PAUSE (fereastra larga; iarna UTC+2) ---
+    - cron: '10,30,52 11 * * *'   # 13:10, 13:30, 13:52 RO iarna / 14:10, 14:30, 14:52 vara
+    - cron: '7,17 12 * * *'       # 14:07, 14:17 RO iarna / 15:07, 15:17 vara
+    - cron: '10 13 * * *'         # 15:10 RO iarna / 16:10 vara
+
+    # --- 18:30 RO START (program normal + inceput BF pe 5 nov), ambele fusuri ---
+    # 14:40Z = 17:40 vara (T-50) / 16:40 iarna
+    - cron: '40 14 * * *'
+    # 15:08, 15:22, 15:40, 15:52Z
+    #   vara: 18:08, 18:22, 18:40, 18:52
+    #   iarna: 17:08, 17:22, 17:40, 17:52 (17:40 = T-50 fata de 18:30)
+    - cron: '8,22,40,52 15 * * *'
+    # 16:10, 16:22, 16:37, 16:52Z
+    #   iarna: 18:10, 18:22, 18:37, 18:52 (18:52 = T-8 fata de 19:00; 16:10 = T-50)
+    #   vara: 19:10, 19:22, 19:37, 19:52 (fereastra de seara, inca pornit)
+    - cron: '10,22,37,52 16 * * *'
+
+    # --- 19:00 RO START (fereastra larga; iarna) + backup tarziu 18:30 ---
+    - cron: '7,17 17 * * *'       # 19:07, 19:17 RO iarna / 20:07, 20:17 vara
+    - cron: '10 18 * * *'         # 20:10 RO iarna / 21:10 vara
+
+    # --- 01:00 RO PAUSE. Trece de miezul noptii. ---
+    # Pe 6 nov (BF) aceleasi ore raman START. Pe 7 nov la 01:00 opresc.
+    # 21:10, 21:30, 21:52Z = 00:10, 00:30, 00:52 vara (inainte de 01:00)
+    #                     = 23:10, 23:30, 23:52 iarna (seara, inca pornit)
+    - cron: '10,30,52 21 * * *'
+    # 22:07, 22:17, 22:32, 22:52Z
+    #   vara: 01:07, 01:17, 01:32, 01:52
+    #   iarna: 00:07, 00:17, 00:32, 00:52 (00:52 = T-8; 00:32 = T-28)
+    - cron: '7,17,32,52 22 * * *'
+    - cron: '7,17 23 * * *'       # 01:07, 01:17 RO iarna / 02:07, 02:17 vara
+    - cron: '12 0 * * *'          # 02:12 RO iarna / 03:12 vara (rezerva)
+    - cron: '20 1 * * *'          # 03:20 RO iarna / 04:20 vara (rezerva tarzie)
+
   workflow_dispatch:
     inputs:
       action:
@@ -26,9 +67,17 @@ on:
         options: [AUTO, START, PAUSE]
         default: AUTO
 
+# O singura rulare o data: doua browsere pe aceleasi comutatoare s-ar calca.
+# O rulare in desfasurare nu e anulata; cele in asteptare sunt inlocuite de
+# ultima, care decide dupa ora la care porneste efectiv.
+concurrency:
+  group: emag-ads-auto-scheduler
+  cancel-in-progress: false
+
 jobs:
   run-emag-toggle:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -40,8 +89,11 @@ jobs:
 
       - name: Decide actiunea dupa ziua si ora Bucuresti
         id: act
+        env:
+          TZ: Europe/Bucharest
         run: |
-          # Reguli detaliate (BF, fereastra larga 11–14 si 19–01, weekend): vezi decide_action.js.
+          # Reguli (BF, fereastra larga 11–14 si 19–01, program 18:30): decide_action.js.
+          # Orice minut din fereastra, nu doar minutele din cron.
           MODE="${{ github.event_name == 'workflow_dispatch' && inputs.action || 'AUTO' }}"
           if [ "$MODE" != "AUTO" ]; then
             echo "action=$MODE" >> $GITHUB_OUTPUT
