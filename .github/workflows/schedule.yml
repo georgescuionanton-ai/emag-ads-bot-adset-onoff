@@ -1,70 +1,109 @@
 name: eMAG Ads Auto Scheduler
 
+# Program din 2026-11-16, in fiecare zi, Europe/Bucharest:
+#   ON  11:00 inclusiv → 01:00 exclusiv (trece de miezul noptii)
+#   OFF 01:00 inclusiv → 11:00 exclusiv
+# Nu mai exista pauza la 14:00. Inainte de 16 nov raman regulile vechi
+# (Black Friday si ferestrele 11:00–14:00 / 19:00–01:00), in decide_action.js.
+#
+# Decizia AUTO foloseste ora reala din Bucuresti, nu minutul din cron.
+# O rulare intarziata sau repetata este idempotenta.
+#
+# GitHub a sarit, in 10–15 nov 2026, peste cron-urile dintre ~10:30 si ~17:00 RO
+# (nu apare nicio rulare). Rezervele de dimineata / dupa-amiaza acopera
+# intarzieri de ~55 min in jurul pragurilor si, daca toata fereastra e sarita,
+# prima rulare care chiar porneste (de obicei dupa 17:00) aplica starea corecta.
+# Un hold de buget blocheaza repornirea pana la 18:30.
+#
+# Fus: fiecare cron are timezone Europe/Bucharest. In noiembrie RO este
+# UTC+2 (EET); vara UTC+3 (EEST). GitHub muta cron-ul la schimbarea orei.
+# La primavara, ora 03:00–03:59 nu exista; nu programam nimic in ora 03.
+# Decizia foloseste Intl Europe/Bucharest, nu un offset fix.
+#
+# Run workflow — dupa merge, branch: main. Un singur input, "action":
+#   AUTO                 = dupa ora Bucuresti
+#   START                = porneste acum si sterge hold-ul de buget
+#   PAUSE                = opreste acum, FARA hold (urmatorul cron poate reporni)
+#   PAUSE_UNTIL_EVENING  = opreste si tine oprit pana la 18:30 RO azi
+# Pentru plafonul de buget, inainte de 18:30: action = PAUSE_UNTIL_EVENING.
+# Dupa 18:30 acelasi input este doar o oprire punctuala (nu seteaza hold).
+# Hold-ul este artifactul Actions "emag-hold", nu o variabila de repo.
+
+run-name: eMAG Ads ${{ github.event_name == 'workflow_dispatch' && inputs.action || 'AUTO' }}
+
 on:
   schedule:
-    # Cron in UTC. Bucuresti: iarna EET = UTC+2 (inclusiv noiembrie 2026),
-    # vara EEST = UTC+3. Orele 11:00 / 14:00 / 19:00 conteaza doar in fereastra
-    # larga din noiembrie (iarna). 18:30 si 01:00 au triggere pentru ambele fusuri.
-    #
-    # GitHub intarzie des rularea cu ~30–55 min si poate pierde o rulare din aceeasi
-    # ora. Pentru fiecare prag exista:
-    #   - ~50 min si ~30 min inainte (la timp reafirma starea curenta; daca vin
-    #     intarziate, aterizeaza imediat dupa prag si aplica starea noua);
-    #   - ~8 min inainte;
-    #   - doua rulari la cateva minute dupa prag;
-    #   - o rezerva in ora UTC urmatoare.
-    # decide_action.js alege START/PAUSE dupa minutul real din Europe/Bucharest,
-    # deci repetarile sunt idempotente.
-    #
-    # Program (neschimbat):
-    #   2–5 si 7–15 nov 2026: [11:00, 14:00) si [19:00, 01:00)
-    #   5 nov 18:30 → 7 nov 01:00: Black Friday, mereu pornit
-    #   din 16 nov 2026: [18:30, 01:00)
+    # Orele de mai jos sunt Europe/Bucharest, nu UTC.
+    # In jurul fiecarui prag (01:00 PAUSE, 11:00 START, 18:30 reluare):
+    #   ~50 si ~30 min inainte (la timp reafirma starea; intarziate, aterizeaza
+    #   imediat dupa prag), ~8 min inainte, si doua rulari la cateva minute dupa.
+    # Intre 11:00 si 18:30 sunt rezerve din ora in ora: daca GitHub sarea toata
+    # dimineata, prima rulare care prinde totusi aplica START, iar un hold de
+    # buget le tine pe PAUSE pana la 18:30.
 
-    # --- 11:00 RO START (fereastra larga; iarna UTC+2) ---
-    - cron: '10,30,52 8 * * *'    # 10:10, 10:30, 10:52 RO iarna / 11:10, 11:30, 11:52 vara
-    - cron: '7,17 9 * * *'        # 11:07, 11:17 RO iarna / 12:07, 12:17 vara
-    - cron: '10 10 * * *'         # 12:10 RO iarna / 13:10 vara
+    # --- 01:00 RO PAUSE, apoi reafirmare OFF pana la 11:00 ---
+    - cron: '12,32,42,52 0 * * *'
+      timezone: 'Europe/Bucharest'
+    - cron: '7,18 1 * * *'
+      timezone: 'Europe/Bucharest'
+    - cron: '17 2 * * *'
+      timezone: 'Europe/Bucharest'
+    - cron: '22 4 * * *'
+      timezone: 'Europe/Bucharest'
+    - cron: '47 5 * * *'
+      timezone: 'Europe/Bucharest'
+    - cron: '17 7 * * *'
+      timezone: 'Europe/Bucharest'
+    - cron: '42 8 * * *'
+      timezone: 'Europe/Bucharest'
+    - cron: '17 9 * * *'
+      timezone: 'Europe/Bucharest'
 
-    # --- 14:00 RO PAUSE (fereastra larga; iarna UTC+2) ---
-    - cron: '10,30,52 11 * * *'   # 13:10, 13:30, 13:52 RO iarna / 14:10, 14:30, 14:52 vara
-    - cron: '7,17 12 * * *'       # 14:07, 14:17 RO iarna / 15:07, 15:17 vara
-    - cron: '10 13 * * *'         # 15:10 RO iarna / 16:10 vara
+    # --- 11:00 RO START + rezerve prin dupa-amiaza (inainte de 18:30) ---
+    - cron: '12,32,42,52 10 * * *'
+      timezone: 'Europe/Bucharest'
+    - cron: '7,18 11 * * *'
+      timezone: 'Europe/Bucharest'
+    - cron: '17 12 * * *'
+      timezone: 'Europe/Bucharest'
+    - cron: '22 13 * * *'
+      timezone: 'Europe/Bucharest'
+    - cron: '17 14 * * *'
+      timezone: 'Europe/Bucharest'
+    - cron: '22 15 * * *'
+      timezone: 'Europe/Bucharest'
+    - cron: '17,47 16 * * *'
+      timezone: 'Europe/Bucharest'
+    - cron: '12,42,52 17 * * *'
+      timezone: 'Europe/Bucharest'
 
-    # --- 18:30 RO START (program normal + inceput BF pe 5 nov), ambele fusuri ---
-    # 14:40Z = 17:40 vara (T-50) / 16:40 iarna
-    - cron: '40 14 * * *'
-    # 15:08, 15:22, 15:40, 15:52Z
-    #   vara: 18:08, 18:22, 18:40, 18:52
-    #   iarna: 17:08, 17:22, 17:40, 17:52 (17:40 = T-50 fata de 18:30)
-    - cron: '8,22,40,52 15 * * *'
-    # 16:10, 16:22, 16:37, 16:52Z
-    #   iarna: 18:10, 18:22, 18:37, 18:52 (18:52 = T-8 fata de 19:00; 16:10 = T-50)
-    #   vara: 19:10, 19:22, 19:37, 19:52 (fereastra de seara, inca pornit)
-    - cron: '10,22,37,52 16 * * *'
-
-    # --- 19:00 RO START (fereastra larga; iarna) + backup tarziu 18:30 ---
-    - cron: '7,17 17 * * *'       # 19:07, 19:17 RO iarna / 20:07, 20:17 vara
-    - cron: '10 18 * * *'         # 20:10 RO iarna / 21:10 vara
-
-    # --- 01:00 RO PAUSE. Trece de miezul noptii. ---
-    # Pe 6 nov (BF) aceleasi ore raman START. Pe 7 nov la 01:00 opresc.
-    # 21:10, 21:30, 21:52Z = 00:10, 00:30, 00:52 vara (inainte de 01:00)
-    #                     = 23:10, 23:30, 23:52 iarna (seara, inca pornit)
-    - cron: '10,30,52 21 * * *'
-    # 22:07, 22:17, 22:32, 22:52Z
-    #   vara: 01:07, 01:17, 01:32, 01:52
-    #   iarna: 00:07, 00:17, 00:32, 00:52 (00:52 = T-8; 00:32 = T-28)
-    - cron: '7,17,32,52 22 * * *'
-    - cron: '7,17 23 * * *'       # 01:07, 01:17 RO iarna / 02:07, 02:17 vara
-    - cron: '12 0 * * *'          # 02:12 RO iarna / 03:12 vara (rezerva)
-    - cron: '20 1 * * *'          # 03:20 RO iarna / 04:20 vara (rezerva tarzie)
+    # --- 18:30 RO START (reluare dupa hold-ul de buget; altfel deja pornit) ---
+    - cron: '8,17,27,37,48 18 * * *'
+      timezone: 'Europe/Bucharest'
+    - cron: '12,47 19 * * *'
+      timezone: 'Europe/Bucharest'
+    - cron: '17 20 * * *'
+      timezone: 'Europe/Bucharest'
+    - cron: '40 21 * * *'
+      timezone: 'Europe/Bucharest'
+    - cron: '22 22 * * *'
+      timezone: 'Europe/Bucharest'
+    - cron: '17 23 * * *'
+      timezone: 'Europe/Bucharest'
 
   workflow_dispatch:
     inputs:
       action:
+        description: >
+          AUTO = dupa ora Bucuresti. START = porneste acum si sterge hold-ul.
+          PAUSE = opreste acum, fara hold (cron-ul urmator poate reporni).
+          PAUSE_UNTIL_EVENING = opreste si tine oprit pana la 18:30 azi (plafon de buget; de folosit inainte de 18:30).
         type: choice
-        options: [AUTO, START, PAUSE]
+        options:
+          - AUTO
+          - START
+          - PAUSE
+          - PAUSE_UNTIL_EVENING
         default: AUTO
 
 # O singura rulare o data: doua browsere pe aceleasi comutatoare s-ar calca.
@@ -73,6 +112,13 @@ on:
 concurrency:
   group: emag-ads-auto-scheduler
   cancel-in-progress: false
+
+# contents: read e de ajuns pentru checkout. Hold-ul nu se comite pe main
+# (branch protection / GITHUB_TOKEN nu scrie variabile de repo); sta in
+# artifactul emag-hold, deci e nevoie de actions: write.
+permissions:
+  contents: read
+  actions: write
 
 jobs:
   run-emag-toggle:
@@ -85,26 +131,37 @@ jobs:
         with:
           node-version: '20'
 
-      - run: npm install puppeteer
-
-      - name: Decide actiunea dupa ziua si ora Bucuresti
+      - name: Decide actiunea si pregateste hold-ul pana la 18:30
         id: act
         env:
           TZ: Europe/Bucharest
+          GH_TOKEN: ${{ github.token }}
+          MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.action || 'AUTO' }}
+        run: node persist_hold.js
+
+      - name: Salveaza hold-ul (artifact emag-hold)
+        id: save
+        if: steps.act.outputs.persist == 'true'
+        continue-on-error: ${{ steps.act.outputs.persist_required != 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: emag-hold
+          path: hold-out/hold.json
+          retention-days: 3
+          if-no-files-found: error
+
+      - name: Hold-ul obligatoriu nu a fost salvat
+        if: steps.act.outputs.persist_required == 'true' && steps.save.outcome != 'success'
         run: |
-          # Reguli (BF, fereastra larga 11–14 si 19–01, program 18:30): decide_action.js.
-          # Orice minut din fereastra, nu doar minutele din cron.
-          MODE="${{ github.event_name == 'workflow_dispatch' && inputs.action || 'AUTO' }}"
-          if [ "$MODE" != "AUTO" ]; then
-            echo "action=$MODE" >> $GITHUB_OUTPUT
-            echo "Mod manual: $MODE"
-          else
-            ACTION=$(node decide_action.js)
-            echo "action=$ACTION" >> $GITHUB_OUTPUT
-            echo "AUTO → $ACTION  ($(TZ=Europe/Bucharest date '+%Y-%m-%d %H:%M %Z'))"
-          fi
+          echo "Nu am salvat hold-ul. Nu comut anunturile, ca un cron urmator sa nu le reporneasca peste o pauza de buget (sau sa le tina oprite dupa START)."
+          exit 1
+
+      - name: Instaleaza puppeteer
+        if: steps.act.outputs.persist_required != 'true' || steps.save.outcome == 'success'
+        run: npm install puppeteer
 
       - name: Executare
+        if: steps.act.outputs.persist_required != 'true' || steps.save.outcome == 'success'
         run: node emag_toggle.js ${{ steps.act.outputs.action }}
         env:
           EMAG_USER: ${{ secrets.EMAG_USER }}
