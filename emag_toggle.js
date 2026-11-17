@@ -1,5 +1,6 @@
 const puppeteer = require('puppeteer');
 const TARGETS = require('./targets');
+const { isStartAllowed, isBlockedFromStart, START_ALLOWLIST } = TARGETS;
 
 const EMAIL = process.env.EMAG_USER;
 const PASSWORD = process.env.EMAG_PASS;
@@ -37,20 +38,24 @@ async function loginIfNeeded(page) {
   await sleep(8000);
 }
 
-/** Gaseste comutatorul (button[role=switch]) pentru un ad set dupa nume. */
+/**
+ * Comutatorul din randul care are EXACT un switch si numele cerut.
+ * Nu urca pana la un stramos care cuprinde toate randurile: acolo primul
+ * switch este alt ad set (ex. "Imprimante others") si l-ar porni din greseala.
+ */
 async function findSwitchByName(page, name) {
   await page.waitForFunction(
     n => document.body.innerText.includes(n), { timeout: 30000 }, name);
-  await sleep(2000);
+  await sleep(1500);
 
   const handle = await page.evaluateHandle(n => {
     const links = Array.from(document.querySelectorAll('a, span, td, div'))
-      .filter(e => e.children.length === 0 && (e.innerText || '').trim() === n);
+      .filter(e => e.children.length === 0 && (e.innerText || '').replace(/\s+/g, ' ').trim() === n);
     for (const el of links) {
       let row = el;
       for (let i = 0; i < 8 && row; i++, row = row.parentElement) {
-        const sw = row.querySelector && row.querySelector('button[role="switch"]');
-        if (sw) return sw;
+        const switches = row.querySelectorAll ? row.querySelectorAll('button[role="switch"]') : [];
+        if (switches.length === 1) return switches[0];
       }
     }
     return null;
@@ -91,15 +96,54 @@ async function readStatusAfterReload(page, target) {
   await page.waitForFunction(
     n => document.body.innerText.includes(n), { timeout: 30000 }, name);
   return page.evaluate(n => {
-    const el = Array.from(document.querySelectorAll('a, span, td, div'))
-      .find(e => e.children.length === 0 && (e.innerText || '').trim() === n);
-    let row = el;
-    for (let i = 0; i < 8 && row; i++, row = row.parentElement) {
-      const sw = row.querySelector && row.querySelector('button[role="switch"]');
-      if (sw) return sw.getAttribute('aria-checked');
+    const leaves = Array.from(document.querySelectorAll('a, span, td, div'))
+      .filter(e => e.children.length === 0 && (e.innerText || '').replace(/\s+/g, ' ').trim() === n);
+    for (const el of leaves) {
+      let row = el;
+      for (let i = 0; i < 8 && row; i++, row = row.parentElement) {
+        const switches = row.querySelectorAll ? row.querySelectorAll('button[role="switch"]') : [];
+        if (switches.length === 1) return switches[0].getAttribute('aria-checked');
+      }
     }
     return null;
   }, name);
+}
+
+/** Nume de ad set vazute ca text frunza pe pagina curenta. */
+async function leafTexts(page) {
+  return page.evaluate(() => {
+    const leaves = Array.from(document.querySelectorAll('a, span, td, div'))
+      .filter(e => e.children.length === 0)
+      .map(e => (e.innerText || '').replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+    return Array.from(new Set(leaves));
+  });
+}
+
+/**
+ * Daca un grup exclus ("Imprimante others", "Cartus_*") este pornit,
+ * il opreste. Nu il porneste niciodata. START si PAUSE apeleaza asta.
+ */
+async function turnOffBlocked(page) {
+  const names = (await leafTexts(page)).filter(isBlockedFromStart);
+  for (const name of names) {
+    const sw = await findSwitchByName(page, name);
+    if (!sw) {
+      console.log('Fara comutator, las neschimbat: ' + name);
+      continue;
+    }
+    const on = await readAriaChecked(page, sw);
+    if (!on) {
+      console.log('Ramas oprit (exclus de la START): ' + name);
+      continue;
+    }
+    console.log('Opresc grup exclus de la START: ' + name);
+    await sw.click();
+    await sleep(4000);
+    await confirmIfNeeded(page);
+    await sleep(3000);
+  }
+  return names;
 }
 
 async function toggleTarget(page, target, action) {
@@ -107,6 +151,11 @@ async function toggleTarget(page, target, action) {
   const label = isFirstAdSet(target.adSet)
     ? `campanie ${id} (primul ad set)`
     : `campanie ${id} / ${target.adSet}`;
+  const wantOn = action === 'START';
+
+  if (wantOn && !isStartAllowed(target.adSet)) {
+    throw new Error('START refuza ' + label + '. Allowlist: ' + START_ALLOWLIST.join(', '));
+  }
 
   console.log(`\n=== Tinta: ${label} ===`);
   await page.goto(target.url, { waitUntil: 'networkidle2', timeout: 60000 });
@@ -120,16 +169,21 @@ async function toggleTarget(page, target, action) {
 
   if (!sw) throw new Error('Nu am gasit comutatorul pentru ' + label);
 
-  const wantOn = action === 'START';
   const before = await readAriaChecked(page, sw);
   console.log('2. Stare inainte:', before ? 'ACTIV' : 'OPRIT');
 
   if (before !== wantOn) {
+    if (wantOn && isBlockedFromStart(target.adSet)) {
+      throw new Error('Refuz sa pornesc grupul exclus ' + label);
+    }
     await sw.click();
     await sleep(4000);
     await confirmIfNeeded(page);
     await sleep(3000);
   }
+
+  const blocked = await turnOffBlocked(page);
+  if (blocked.length) console.log('Grupuri excluse vazute:', blocked.join(' | '));
 
   await page.reload({ waitUntil: 'networkidle2' });
   await sleep(4000);
@@ -138,6 +192,16 @@ async function toggleTarget(page, target, action) {
   await page.screenshot({ path: `rezultat-${id}.png`, fullPage: true });
 
   if ((status === 'true') !== wantOn) throw new Error('Starea nu s-a schimbat pentru ' + label);
+
+  const stillOn = [];
+  for (const name of (await leafTexts(page)).filter(isBlockedFromStart)) {
+    const blockedSw = await findSwitchByName(page, name);
+    if (blockedSw && await readAriaChecked(page, blockedSw)) stillOn.push(name);
+  }
+  if (stillOn.length) {
+    throw new Error('Au ramas pornite grupuri excluse de la START: ' + stillOn.join(', '));
+  }
+
   console.log('OK: ' + action + ' executat pentru ' + label);
 }
 
@@ -145,6 +209,14 @@ async function toggleTarget(page, target, action) {
   if (!Array.isArray(TARGETS) || TARGETS.length === 0) {
     console.error('Lista de tinte (targets.js) este goala.');
     process.exit(1);
+  }
+  if (ACTION === 'START') {
+    const denied = TARGETS.filter(t => !isStartAllowed(t.adSet));
+    if (denied.length) {
+      console.error('START are tinte in afara allowlist-ului:', denied.map(t => t.adSet).join(', '));
+      console.error('Allowlist:', START_ALLOWLIST.join(', '));
+      process.exit(1);
+    }
   }
 
   const browser = await puppeteer.launch({

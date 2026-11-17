@@ -1,13 +1,15 @@
 name: eMAG Ads Auto Scheduler
 
 # Program din 2026-11-16, in fiecare zi, Europe/Bucharest:
-#   ON  11:00 inclusiv → 01:00 exclusiv (trece de miezul noptii)
-#   OFF 01:00 inclusiv → 11:00 exclusiv
+#   ON  08:00 inclusiv → 01:00 exclusiv (trece de miezul noptii)
+#   OFF 01:00 inclusiv → 08:00 exclusiv
 # Nu mai exista pauza la 14:00. Inainte de 16 nov raman regulile vechi
 # (Black Friday si ferestrele 11:00–14:00 / 19:00–01:00), in decide_action.js.
 #
 # Decizia AUTO foloseste ora reala din Bucuresti, nu minutul din cron.
 # O rulare intarziata sau repetata este idempotenta.
+# START (si reluarea de la 18:30) porneste doar allowlist-ul din targets.js.
+# "Imprimante others" si ad set-urile "Cartus_*" nu se pornesc; PAUSE le poate opri.
 #
 # GitHub a sarit, in 10–15 nov 2026, peste cron-urile dintre ~10:30 si ~17:00 RO
 # (nu apare nicio rulare). Rezervele de dimineata / dupa-amiaza acopera
@@ -17,6 +19,8 @@ name: eMAG Ads Auto Scheduler
 #
 # Fus: fiecare cron are timezone Europe/Bucharest. In noiembrie RO este
 # UTC+2 (EET); vara UTC+3 (EEST). GitHub muta cron-ul la schimbarea orei.
+# 08:00 RO = 06:00 UTC iarna (EET) si 05:00 UTC vara (EEST). Ora din cron
+# ramane locala (ora 8, nu 6): cheia timezone face conversia.
 # La primavara, ora 03:00–03:59 nu exista; nu programam nimic in ora 03.
 # Decizia foloseste Intl Europe/Bucharest, nu un offset fix.
 #
@@ -34,14 +38,16 @@ run-name: eMAG Ads ${{ github.event_name == 'workflow_dispatch' && inputs.action
 on:
   schedule:
     # Orele de mai jos sunt Europe/Bucharest, nu UTC.
-    # In jurul fiecarui prag (01:00 PAUSE, 11:00 START, 18:30 reluare):
+    # In jurul fiecarui prag (01:00 PAUSE, 08:00 START, 18:30 reluare):
     #   ~50 si ~30 min inainte (la timp reafirma starea; intarziate, aterizeaza
     #   imediat dupa prag), ~8 min inainte, si doua rulari la cateva minute dupa.
-    # Intre 11:00 si 18:30 sunt rezerve din ora in ora: daca GitHub sarea toata
+    # Intre 08:00 si 18:30 sunt rezerve din ora in ora: daca GitHub sarea toata
     # dimineata, prima rulare care prinde totusi aplica START, iar un hold de
     # buget le tine pe PAUSE pana la 18:30.
+    # Prima rulare la timp care porneste anunturile este 08:07 RO
+    # (06:07 UTC iarna, 05:07 UTC vara).
 
-    # --- 01:00 RO PAUSE, apoi reafirmare OFF pana la 11:00 ---
+    # --- 01:00 RO PAUSE, apoi reafirmare OFF pana la 08:00 ---
     - cron: '12,32,42,52 0 * * *'
       timezone: 'Europe/Bucharest'
     - cron: '7,18 1 * * *'
@@ -52,17 +58,17 @@ on:
       timezone: 'Europe/Bucharest'
     - cron: '47 5 * * *'
       timezone: 'Europe/Bucharest'
-    - cron: '17 7 * * *'
+
+    # --- 08:00 RO START (06:00 UTC iarna) + rezerve prin dupa-amiaza (inainte de 18:30) ---
+    - cron: '12,32,42,52 7 * * *'
       timezone: 'Europe/Bucharest'
-    - cron: '42 8 * * *'
+    - cron: '7,18 8 * * *'
       timezone: 'Europe/Bucharest'
     - cron: '17 9 * * *'
       timezone: 'Europe/Bucharest'
-
-    # --- 11:00 RO START + rezerve prin dupa-amiaza (inainte de 18:30) ---
-    - cron: '12,32,42,52 10 * * *'
+    - cron: '22 10 * * *'
       timezone: 'Europe/Bucharest'
-    - cron: '7,18 11 * * *'
+    - cron: '17 11 * * *'
       timezone: 'Europe/Bucharest'
     - cron: '17 12 * * *'
       timezone: 'Europe/Bucharest'

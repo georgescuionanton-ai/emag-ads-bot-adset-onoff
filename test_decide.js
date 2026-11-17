@@ -2,7 +2,8 @@
 /**
  * Verifica decide() pentru orice minut, hold-ul pana la 18:30, si ca
  * cron-urile din schedule.yml (timezone Europe/Bucharest) acopera
- * 11:00 / 18:30 / 01:00 chiar daca GitHub intarzie ~55 min.
+ * 08:00 / 18:30 / 01:00 chiar daca GitHub intarzie ~55 min.
+ * 08:00 Europe/Bucharest = 06:00 UTC iarna (EET, UTC+2).
  * Rulare: node test_decide.js
  */
 'use strict';
@@ -17,6 +18,7 @@ const {
   resolveDispatch,
   parseHoldDocument,
 } = require('./decide_action');
+const { isStartAllowed, isBlockedFromStart, START_ALLOWLIST } = require('./targets');
 
 const SAMPLES = [
   // 3 nov — fereastra larga: doar 11:00–14:00 si 19:00–01:00
@@ -37,7 +39,9 @@ const SAMPLES = [
   '2026-11-06 18:45',
   '2026-11-06 19:05',
 
-  // 16 nov incolo — continuu 11:00–01:00, fara pauza la 14:00
+  // 16 nov incolo — continuu 08:00–01:00, fara pauza la 14:00
+  '2026-11-16 07:59',
+  '2026-11-16 08:00',
   '2026-11-16 10:59',
   '2026-11-16 11:00',
   '2026-11-16 14:00',
@@ -80,12 +84,16 @@ const SAMPLES = [
   '2026-11-16 00:59',
   '2026-11-16 01:00',
 
-  // Inainte de 16 nov programul vechi ramane 18:30; dupa, 11:00 inclusiv vara
+  // Inainte de 16 nov programul vechi ramane 18:30; dupa, 08:00 inclusiv vara
   '2026-07-15 11:00',
   '2026-07-15 18:29',
   '2026-07-15 18:30',
+  '2026-12-01 07:59',
+  '2026-12-01 08:00',
   '2026-12-01 10:59',
   '2026-12-01 11:00',
+  '2027-07-15 07:59',
+  '2027-07-15 08:00',
   '2027-07-15 10:59',
   '2027-07-15 11:00',
   '2027-07-15 14:00',
@@ -108,7 +116,9 @@ const EXPECTED = {
   '2026-11-06 18:45': 'START',
   '2026-11-06 19:05': 'START',
 
-  '2026-11-16 10:59': 'PAUSE',
+  '2026-11-16 07:59': 'PAUSE',
+  '2026-11-16 08:00': 'START',
+  '2026-11-16 10:59': 'START',
   '2026-11-16 11:00': 'START',
   '2026-11-16 14:00': 'START',
   '2026-11-16 18:00': 'START',
@@ -152,9 +162,13 @@ const EXPECTED = {
   '2026-07-15 11:00': 'PAUSE',
   '2026-07-15 18:29': 'PAUSE',
   '2026-07-15 18:30': 'START',
-  '2026-12-01 10:59': 'PAUSE',
+  '2026-12-01 07:59': 'PAUSE',
+  '2026-12-01 08:00': 'START',
+  '2026-12-01 10:59': 'START',
   '2026-12-01 11:00': 'START',
-  '2027-07-15 10:59': 'PAUSE',
+  '2027-07-15 07:59': 'PAUSE',
+  '2027-07-15 08:00': 'START',
+  '2027-07-15 10:59': 'START',
   '2027-07-15 11:00': 'START',
   '2027-07-15 14:00': 'START',
 };
@@ -185,7 +199,7 @@ function spec(y, m, d, H, M) {
     return 'PAUSE';
   }
   if (isNewScheduleDay(y, m, d)) {
-    if (mins >= 11 * 60 || mins < 60) return 'START';
+    if (mins >= 8 * 60 || mins < 60) return 'START';
     return 'PAUSE';
   }
   if (mins >= 18 * 60 + 30 || mins < 60) return 'START';
@@ -352,7 +366,11 @@ assertParts('2026-11-06T23:00:00Z', { year: 2026, month: 11, day: 7, hour: 1, mi
 assertParts('2026-11-06T23:08:00Z', { year: 2026, month: 11, day: 7, hour: 1, minute: 8 });
 assertParts('2026-11-15T22:30:00Z', { year: 2026, month: 11, day: 16, hour: 0, minute: 30 });
 assertParts('2026-11-15T23:00:00Z', { year: 2026, month: 11, day: 16, hour: 1, minute: 0 });
+assertParts('2026-11-16T05:59:00Z', { year: 2026, month: 11, day: 16, hour: 7, minute: 59 });
+assertParts('2026-11-16T06:00:00Z', { year: 2026, month: 11, day: 16, hour: 8, minute: 0 });
 assertParts('2026-11-16T09:00:00Z', { year: 2026, month: 11, day: 16, hour: 11, minute: 0 });
+assertParts('2027-07-15T04:59:00Z', { year: 2027, month: 7, day: 15, hour: 7, minute: 59 });
+assertParts('2027-07-15T05:00:00Z', { year: 2027, month: 7, day: 15, hour: 8, minute: 0 });
 assertParts('2026-11-16T16:30:00Z', { year: 2026, month: 11, day: 16, hour: 18, minute: 30 });
 assertParts('2026-07-15T15:29:00Z', { year: 2026, month: 7, day: 15, hour: 18, minute: 29 });
 assertParts('2026-07-15T15:30:00Z', { year: 2026, month: 7, day: 15, hour: 18, minute: 30 });
@@ -455,14 +473,14 @@ function assertLocalDelayCoverage(name, y, m, d, H, M, maxLateMin, holdDate) {
 }
 
 const MAX_LATE = 20;
-assertLocalDelayCoverage('11:00 START 16 nov', 2026, 11, 16, 11, 0, MAX_LATE, null);
-assertLocalDelayCoverage('11:00 cu hold 16 nov', 2026, 11, 16, 11, 0, MAX_LATE, '2026-11-16');
+assertLocalDelayCoverage('08:00 START 16 nov', 2026, 11, 16, 8, 0, MAX_LATE, null);
+assertLocalDelayCoverage('08:00 cu hold 16 nov', 2026, 11, 16, 8, 0, MAX_LATE, '2026-11-16');
 assertLocalDelayCoverage('18:30 reluare 16 nov', 2026, 11, 16, 18, 30, MAX_LATE, null);
 assertLocalDelayCoverage('18:30 cu hold 16 nov', 2026, 11, 16, 18, 30, MAX_LATE, '2026-11-16');
 assertLocalDelayCoverage('01:00 PAUSE 17 nov', 2026, 11, 17, 1, 0, MAX_LATE, null);
 assertLocalDelayCoverage('01:00 PAUSE 7 nov (dupa BF)', 2026, 11, 7, 1, 0, MAX_LATE, null);
 assertLocalDelayCoverage('18:30 START BF 5 nov', 2026, 11, 5, 18, 30, MAX_LATE, null);
-assertLocalDelayCoverage('11:00 START vara 2027', 2027, 7, 15, 11, 0, MAX_LATE, null);
+assertLocalDelayCoverage('08:00 START vara 2027', 2027, 7, 15, 8, 0, MAX_LATE, null);
 assertLocalDelayCoverage('18:30 vara 2027', 2027, 7, 15, 18, 30, MAX_LATE, '2027-07-15');
 assertLocalDelayCoverage('01:00 PAUSE vara 2027', 2027, 7, 16, 1, 0, MAX_LATE, null);
 
@@ -515,7 +533,7 @@ for (const [y, m, d, off] of [
   [2027, 7, 15, 3],
   [2027, 3, spring2027, 3],
 ]) {
-  for (const [H, M] of [[11, 0], [18, 30]]) {
+  for (const [H, M] of [[8, 0], [18, 30]]) {
     if (!matchesOffset(y, m, d, H, M, off)) {
       fail(`${labelOf(y, m, d, H, M)} nu cade pe UTC+${off}`);
     }
@@ -523,8 +541,10 @@ for (const [y, m, d, off] of [
 }
 if (!matchesOffset(2026, 11, 17, 1, 0, 2)) fail('01:00 RO 17 nov 2026 nu e UTC+2');
 if (!matchesOffset(2027, 7, 16, 1, 0, 3)) fail('01:00 RO 16 iul 2027 nu e UTC+3');
-// In dimineata schimbarii la ora de vara, 01:00 inca e UTC+2, 11:00 e deja UTC+3.
+// In dimineata schimbarii la ora de vara, 01:00 inca e UTC+2, 08:00 e deja UTC+3.
 if (!matchesOffset(2027, 3, spring2027, 1, 0, 2)) fail('01:00 in dimineata de primavara ar trebui UTC+2');
+if (!matchesOffset(2027, 3, spring2027, 8, 0, 3)) fail('08:00 in dimineata de primavara ar trebui UTC+3');
+if (!matchesOffset(2026, 11, 18, 8, 0, 2)) fail('08:00 RO 18 nov 2026 nu e 06:00 UTC');
 
 function utcForLocal(y, m, d, H, M) {
   for (const off of [2, 3]) {
@@ -559,13 +579,15 @@ function expectDispatch(name, mode, label, hold, fields) {
 expectDispatch('AUTO 14:00 fara hold', 'AUTO', '2026-11-16 14:00', null, {
   action: 'START', persist: false, persistRequired: false,
 });
-expectDispatch('AUTO 10:59', 'AUTO', '2026-11-16 10:59', null, { action: 'PAUSE', persist: false });
-expectDispatch('AUTO 11:00', 'AUTO', '2026-11-16 11:00', null, { action: 'START', persist: false });
+expectDispatch('AUTO 07:59', 'AUTO', '2026-11-16 07:59', null, { action: 'PAUSE', persist: false });
+expectDispatch('AUTO 08:00', 'AUTO', '2026-11-16 08:00', null, { action: 'START', persist: false });
+expectDispatch('AUTO 11:00 inca in fereastra', 'AUTO', '2026-11-16 11:00', null, { action: 'START', persist: false });
 expectDispatch('AUTO 01:00', 'AUTO', '2026-11-17 01:00', null, { action: 'PAUSE', persist: false });
 expectDispatch('AUTO 00:59', 'AUTO', '2026-11-17 00:59', null, { action: 'START', persist: false });
 expectDispatch('hold tine 14:00', 'AUTO', '2026-11-16 14:00', '2026-11-16', {
   action: 'PAUSE', persist: false, persistRequired: false,
 });
+expectDispatch('hold tine 08:00', 'AUTO', '2026-11-16 08:00', '2026-11-16', { action: 'PAUSE', persist: false });
 expectDispatch('hold tine 11:00', 'AUTO', '2026-11-16 11:00', '2026-11-16', { action: 'PAUSE', persist: false });
 expectDispatch('hold tine 18:29', 'AUTO', '2026-11-16 18:29', '2026-11-16', { action: 'PAUSE', persist: false });
 expectDispatch('hold expira 18:30', 'AUTO', '2026-11-16 18:30', '2026-11-16', {
@@ -720,6 +742,35 @@ for (const s of uniqueSlots) {
   console.log(`  ${pad(s.h)}:${pad(s.m)} RO   iarna ${pad(wH)}:${pad(s.m)}Z (UTC+${w})   vara ${pad(uH)}:${pad(s.m)}Z (UTC+${u})`);
 }
 console.log(`\n${uniqueSlots.length} declansari locale / zi, ${crons.length} expresii cron.`);
+
+const targets = require('./targets');
+const allow = new Set(START_ALLOWLIST);
+for (const name of [
+  'Imprimante_oct26-ian27',
+  'Imprimante_exact_nov26-ian27',
+  'Cartuse_Canon_auto_nov26-ian27',
+  'Canon printere vs competitori',
+]) {
+  if (!isStartAllowed(name)) fail('allowlist nu porneste ' + name);
+}
+if (isStartAllowed('Imprimante others')) fail('Imprimante others nu trebuie pornit');
+if (isStartAllowed('first')) fail('START nu porneste first');
+if (isStartAllowed('Cartus PG-585 / CL-586_Printers TS6550i')) fail('Cartus * nu trebuie pornit');
+if (isStartAllowed('Cartus_vechi')) fail('Cartus_ nu trebuie pornit');
+if (!isBlockedFromStart('Imprimante others')) fail('Imprimante others trebuie blocat');
+if (!isBlockedFromStart('Cartus GI-45_Printer GX1040')) fail('Cartus cu spatiu trebuie blocat');
+if (!isBlockedFromStart('Cartus_PG')) fail('Cartus_ trebuie blocat');
+if (isBlockedFromStart('Cartuse_Canon_auto_nov26-ian27')) fail('Cartuse_Canon nu e Cartus_*');
+if (allow.size !== 4) fail('allowlist trebuie sa aiba 4 nume');
+for (const t of targets) {
+  if (!isStartAllowed(t.adSet)) fail('tinta configurata nu e in allowlist: ' + t.adSet);
+  if (!/campaign-manager\/(632815|648722|652949|634320)/.test(t.url)) {
+    fail('campanie schimbata: ' + t.url);
+  }
+}
+if (targets.some(t => String(t.adSet).toLowerCase() === 'first')) {
+  fail('o tinta inca foloseste first');
+}
 
 console.log('');
 if (failed) {

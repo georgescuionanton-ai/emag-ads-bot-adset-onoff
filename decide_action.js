@@ -9,7 +9,7 @@
  * sau repetata este idempotenta: nu inverseaza starea.
  *
  * Din 2026-11-16 (inclusiv), in fiecare zi, program continuu:
- *   START in [11:00, 24:00) si [00:00, 01:00); PAUSE in [01:00, 11:00).
+ *   START in [08:00, 24:00) si [00:00, 01:00); PAUSE in [01:00, 08:00).
  *   Nu mai exista pauza la 14:00.
  *
  * Hold de buget (PAUSE_UNTIL_EVENING): daca holdDate este ziua curenta din
@@ -33,7 +33,7 @@
 
 // --- configurare usoara ---
 const DEFAULT_START_MIN = 18 * 60 + 30; // inainte de 16 nov 2026: 18:30 inclusiv
-const CONTINUOUS_START_MIN = 11 * 60;   // din 16 nov 2026: 11:00 inclusiv
+const CONTINUOUS_START_MIN = 8 * 60;    // din 16 nov 2026: 08:00 inclusiv
 const EVENING_RESUME_MIN = 18 * 60 + 30; // hold-ul de buget expira la 18:30
 // Fereastra larga (doar pana la 15 nov 2026): [11:00, 14:00) si [19:00, 01:00)
 const WIDE_AM_START_MIN = 11 * 60;
@@ -73,7 +73,7 @@ function isWideDay(y, m, d) {
   return WIDE_RANGES.some(r => r.y === y && r.m === m && d >= r.from && d <= r.to);
 }
 
-/** Programul continuu 11:00–01:00 incepe luni 16 nov 2026 si ramane. */
+/** Programul continuu 08:00–01:00 incepe luni 16 nov 2026 si ramane. */
 function isNewScheduleDay(y, m, d) {
   if (y > 2026) return true;
   if (y < 2026) return false;
