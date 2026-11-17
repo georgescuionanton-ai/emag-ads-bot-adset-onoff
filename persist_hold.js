@@ -134,6 +134,7 @@ function writeHoldFile(storedHoldDate) {
 
 function main() {
   const mode = process.env.MODE || 'AUTO';
+  const eventName = process.env.EVENT || '';
   const when = process.env.WHEN;
   const parts = when ? bucharestParts(when) : bucharestParts(new Date());
   let holdDate;
@@ -147,7 +148,7 @@ function main() {
 
   let result;
   try {
-    result = resolveDispatch(mode, parts, holdDate);
+    result = resolveDispatch(mode, parts, holdDate, eventName);
   } catch (e) {
     log(e.message);
     process.exit(1);
@@ -162,6 +163,7 @@ function main() {
   writeOutput('action', result.action);
   writeOutput('persist', result.persist ? 'true' : 'false');
   writeOutput('persist_required', result.persistRequired ? 'true' : 'false');
+  writeOutput('skip', result.skip ? 'true' : 'false');
 }
 
 if (require.main === module) main();

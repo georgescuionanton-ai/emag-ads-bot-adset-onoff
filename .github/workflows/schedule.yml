@@ -1,33 +1,30 @@
 name: eMAG Ads Auto Scheduler
 
-# Program din 2026-11-16, in fiecare zi, Europe/Bucharest:
-#   ON  08:00 inclusiv → 01:00 exclusiv (trece de miezul noptii)
-#   OFF 01:00 inclusiv → 08:00 exclusiv
-# Nu mai exista pauza la 14:00. Inainte de 16 nov raman regulile vechi
-# (Black Friday si ferestrele 11:00–14:00 / 19:00–01:00), in decide_action.js.
+# Program curent, Europe/Bucharest: anunturile stau pornite toata ziua.
+# Nu exista cron de START dimineata si nici de STOP la 01:00. Un cron nu
+# opreste anunturile. Regulile vechi (inainte de 16 nov 2026) raman doar
+# in decide_action.js, pentru istoric; nu mai au cron.
 #
-# Decizia AUTO foloseste ora reala din Bucuresti, nu minutul din cron.
-# O rulare intarziata sau repetata este idempotenta.
-# START (si reluarea de la 18:30) porneste doar allowlist-ul din targets.js.
-# "Imprimante others" si ad set-urile "Cartus_*" nu se pornesc; PAUSE le poate opri.
+# Singurele cron-uri acopera reluarea de la 18:30 dupa un PAUSE_UNTIL_EVENING
+# manual. Daca nu exista hold de buget, cron-ul nu comuta nimic. Daca hold-ul
+# e inca inainte de 18:30, cron-ul nu porneste anunturile (pauza manuala
+# ramane). La 18:30 sau dupa, daca hold-ul e al zilei, cron-ul porneste
+# allowlist-ul si sterge hold-ul. O intarziere de ~55 min tot prinde reluarea.
 #
-# GitHub a sarit, in 10–15 nov 2026, peste cron-urile dintre ~10:30 si ~17:00 RO
-# (nu apare nicio rulare). Rezervele de dimineata / dupa-amiaza acopera
-# intarzieri de ~55 min in jurul pragurilor si, daca toata fereastra e sarita,
-# prima rulare care chiar porneste (de obicei dupa 17:00) aplica starea corecta.
-# Un hold de buget blocheaza repornirea pana la 18:30.
+# START (manual sau reluarea de la 18:30) porneste doar allowlist-ul din
+# targets.js. "Imprimante others" si "Cartus_*" nu se pornesc niciodata.
+# PAUSE le poate opri.
 #
 # Fus: fiecare cron are timezone Europe/Bucharest. In noiembrie RO este
 # UTC+2 (EET); vara UTC+3 (EEST). GitHub muta cron-ul la schimbarea orei.
-# 08:00 RO = 06:00 UTC iarna (EET) si 05:00 UTC vara (EEST). Ora din cron
-# ramane locala (ora 8, nu 6): cheia timezone face conversia.
+# 18:30 RO = 16:30 UTC iarna si 15:30 UTC vara. Ora din cron ramane locala.
 # La primavara, ora 03:00–03:59 nu exista; nu programam nimic in ora 03.
 # Decizia foloseste Intl Europe/Bucharest, nu un offset fix.
 #
 # Run workflow — dupa merge, branch: main. Un singur input, "action":
-#   AUTO                 = dupa ora Bucuresti
+#   AUTO                 = 24h pornit, sau pauza daca hold-ul e inca activ
 #   START                = porneste acum si sterge hold-ul de buget
-#   PAUSE                = opreste acum, FARA hold (urmatorul cron poate reporni)
+#   PAUSE                = opreste acum, FARA hold (ramane oprit pana la START)
 #   PAUSE_UNTIL_EVENING  = opreste si tine oprit pana la 18:30 RO azi
 # Pentru plafonul de buget, inainte de 18:30: action = PAUSE_UNTIL_EVENING.
 # Dupa 18:30 acelasi input este doar o oprire punctuala (nu seteaza hold).
@@ -38,71 +35,27 @@ run-name: eMAG Ads ${{ github.event_name == 'workflow_dispatch' && inputs.action
 on:
   schedule:
     # Orele de mai jos sunt Europe/Bucharest, nu UTC.
-    # In jurul fiecarui prag (01:00 PAUSE, 08:00 START, 18:30 reluare):
-    #   ~50 si ~30 min inainte (la timp reafirma starea; intarziate, aterizeaza
-    #   imediat dupa prag), ~8 min inainte, si doua rulari la cateva minute dupa.
-    # Intre 08:00 si 18:30 sunt rezerve din ora in ora: daca GitHub sarea toata
-    # dimineata, prima rulare care prinde totusi aplica START, iar un hold de
-    # buget le tine pe PAUSE pana la 18:30.
-    # Prima rulare la timp care porneste anunturile este 08:07 RO
-    # (06:07 UTC iarna, 05:07 UTC vara).
+    # Doar reluarea dupa PAUSE_UNTIL_EVENING. Fara hold, cron-ul iese inainte
+    # de browser si nu porneste si nu opreste nimic.
+    # In jurul lui 18:30: ~50 si ~40 min inainte (intarziate, aterizeaza dupa
+    # prag), cateva minute inainte, apoi 18:37 si 18:48. 19:12 si 19:47
+    # prind reluarea daca GitHub sare ora 18.
+    # 18:30 RO = 16:30 UTC iarna (UTC+2) si 15:30 UTC vara (UTC+3).
 
-    # --- 01:00 RO PAUSE, apoi reafirmare OFF pana la 08:00 ---
-    - cron: '12,32,42,52 0 * * *'
-      timezone: 'Europe/Bucharest'
-    - cron: '7,18 1 * * *'
-      timezone: 'Europe/Bucharest'
-    - cron: '17 2 * * *'
-      timezone: 'Europe/Bucharest'
-    - cron: '22 4 * * *'
-      timezone: 'Europe/Bucharest'
-    - cron: '47 5 * * *'
-      timezone: 'Europe/Bucharest'
-
-    # --- 08:00 RO START (06:00 UTC iarna) + rezerve prin dupa-amiaza (inainte de 18:30) ---
-    - cron: '12,32,42,52 7 * * *'
-      timezone: 'Europe/Bucharest'
-    - cron: '7,18 8 * * *'
-      timezone: 'Europe/Bucharest'
-    - cron: '17 9 * * *'
-      timezone: 'Europe/Bucharest'
-    - cron: '22 10 * * *'
-      timezone: 'Europe/Bucharest'
-    - cron: '17 11 * * *'
-      timezone: 'Europe/Bucharest'
-    - cron: '17 12 * * *'
-      timezone: 'Europe/Bucharest'
-    - cron: '22 13 * * *'
-      timezone: 'Europe/Bucharest'
-    - cron: '17 14 * * *'
-      timezone: 'Europe/Bucharest'
-    - cron: '22 15 * * *'
-      timezone: 'Europe/Bucharest'
-    - cron: '17,47 16 * * *'
-      timezone: 'Europe/Bucharest'
+    # --- 18:30 RO: reluare doar daca hold-ul de buget a ajuns la expirare ---
     - cron: '12,42,52 17 * * *'
       timezone: 'Europe/Bucharest'
-
-    # --- 18:30 RO START (reluare dupa hold-ul de buget; altfel deja pornit) ---
     - cron: '8,17,27,37,48 18 * * *'
       timezone: 'Europe/Bucharest'
     - cron: '12,47 19 * * *'
-      timezone: 'Europe/Bucharest'
-    - cron: '17 20 * * *'
-      timezone: 'Europe/Bucharest'
-    - cron: '40 21 * * *'
-      timezone: 'Europe/Bucharest'
-    - cron: '22 22 * * *'
-      timezone: 'Europe/Bucharest'
-    - cron: '17 23 * * *'
       timezone: 'Europe/Bucharest'
 
   workflow_dispatch:
     inputs:
       action:
         description: >
-          AUTO = dupa ora Bucuresti. START = porneste acum si sterge hold-ul.
-          PAUSE = opreste acum, fara hold (cron-ul urmator poate reporni).
+          AUTO = 24h pornit, sau respecta un hold activ. START = porneste acum si sterge hold-ul.
+          PAUSE = opreste acum, fara hold (ramane oprit pana la un START manual).
           PAUSE_UNTIL_EVENING = opreste si tine oprit pana la 18:30 azi (plafon de buget; de folosit inainte de 18:30).
         type: choice
         options:
@@ -143,6 +96,7 @@ jobs:
           TZ: Europe/Bucharest
           GH_TOKEN: ${{ github.token }}
           MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.action || 'AUTO' }}
+          EVENT: ${{ github.event_name }}
         run: node persist_hold.js
 
       - name: Salveaza hold-ul (artifact emag-hold)
@@ -163,11 +117,11 @@ jobs:
           exit 1
 
       - name: Instaleaza puppeteer
-        if: steps.act.outputs.persist_required != 'true' || steps.save.outcome == 'success'
+        if: steps.act.outputs.skip != 'true' && (steps.act.outputs.persist_required != 'true' || steps.save.outcome == 'success')
         run: npm install puppeteer
 
       - name: Executare
-        if: steps.act.outputs.persist_required != 'true' || steps.save.outcome == 'success'
+        if: steps.act.outputs.skip != 'true' && (steps.act.outputs.persist_required != 'true' || steps.save.outcome == 'success')
         run: node emag_toggle.js ${{ steps.act.outputs.action }}
         env:
           EMAG_USER: ${{ secrets.EMAG_USER }}
