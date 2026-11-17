@@ -8,15 +8,18 @@
  * Aceeasi fereastra intoarce mereu aceeasi actiune, deci o rulare intarziata
  * sau repetata este idempotenta: nu inverseaza starea.
  *
- * Din 2026-11-16 (inclusiv), in fiecare zi, program continuu:
- *   START in [11:00, 24:00) si [00:00, 01:00); PAUSE in [01:00, 11:00).
- *   Nu mai exista pauza la 14:00.
+ * Din 2026-11-16 (inclusiv), anunturile stau pornite toata ziua:
+ *   START la orice ora. Nu exista fereastra de noapte si nici START de dimineata.
  *
  * Hold de buget (PAUSE_UNTIL_EVENING): daca holdDate este ziua curenta din
- * Bucuresti si ora este inainte de 18:30, rezultatul este PAUSE chiar daca
- * programul ar fi START. La 18:30 hold-ul expira si programul reia (START
- * pana la 01:00). Hold-ul nu trece de miezul noptii: data de ieri nu blocheaza
- * ziua noua. Exceptia Black Friday are prioritate fata de hold.
+ * Bucuresti si ora este inainte de 18:30, rezultatul este PAUSE. La 18:30
+ * hold-ul expira si programul reia (START). Hold-ul nu trece de miezul noptii:
+ * data de ieri nu blocheaza ziua noua. Exceptia Black Friday are prioritate
+ * fata de hold.
+ *
+ * Un cron (event schedule) nu comuta nimic decat ca sa reia un hold expirat.
+ * Fara hold, sau cu hold inca inainte de 18:30, cron-ul are skip=true si nu
+ * opreste anunturile. PAUSE manual ramane oprit pana la un START manual.
  *
  * Inainte de 2026-11-16 (neschimbat):
  *   Fereastra larga 2026-11-02..05 si 2026-11-07..15:
@@ -33,7 +36,6 @@
 
 // --- configurare usoara ---
 const DEFAULT_START_MIN = 18 * 60 + 30; // inainte de 16 nov 2026: 18:30 inclusiv
-const CONTINUOUS_START_MIN = 11 * 60;   // din 16 nov 2026: 11:00 inclusiv
 const EVENING_RESUME_MIN = 18 * 60 + 30; // hold-ul de buget expira la 18:30
 // Fereastra larga (doar pana la 15 nov 2026): [11:00, 14:00) si [19:00, 01:00)
 const WIDE_AM_START_MIN = 11 * 60;
@@ -73,7 +75,7 @@ function isWideDay(y, m, d) {
   return WIDE_RANGES.some(r => r.y === y && r.m === m && d >= r.from && d <= r.to);
 }
 
-/** Programul continuu 11:00–01:00 incepe luni 16 nov 2026 si ramane. */
+/** Programul 24h (mereu START, in afara de hold) incepe luni 16 nov 2026. */
 function isNewScheduleDay(y, m, d) {
   if (y > 2026) return true;
   if (y < 2026) return false;
@@ -107,8 +109,7 @@ function scheduleAction(p) {
   }
 
   if (isNewScheduleDay(y, m, d) && !weekendOverride) {
-    if (NOW >= CONTINUOUS_START_MIN || NOW < PAUSE_AT_MIN) return 'START';
-    return 'PAUSE';
+    return 'START';
   }
 
   const startMin = weekendOverride ? WEEKEND_START_MIN : DEFAULT_START_MIN;
@@ -153,10 +154,11 @@ function decide(p, holdDate) {
  *   persist: boolean,
  *   persistRequired: boolean,
  *   storedHoldDate: string|null,
- *   note: string|null
+ *   note: string|null,
+ *   skip: boolean
  * }}
  */
-function resolveDispatch(mode, parts, holdDate) {
+function resolveDispatch(mode, parts, holdDate, eventName) {
   if (!MODES.includes(mode)) throw new Error('Mod invalid: ' + mode);
 
   const today = isoDate(parts);
@@ -170,8 +172,9 @@ function resolveDispatch(mode, parts, holdDate) {
       persistRequired: current !== null,
       storedHoldDate: null,
       note: current
-        ? 'START manual: sterg hold-ul, ca cron-urile urmatoare sa nu opreasca din nou.'
+        ? 'START manual: sterg hold-ul, ca reluarea de la 18:30 sa nu mai tina pauza.'
         : null,
+      skip: false,
     };
   }
 
@@ -182,6 +185,7 @@ function resolveDispatch(mode, parts, holdDate) {
       persistRequired: false,
       storedHoldDate: current,
       note: null,
+      skip: false,
     };
   }
 
@@ -192,7 +196,8 @@ function resolveDispatch(mode, parts, holdDate) {
         persist: false,
         persistRequired: false,
         storedHoldDate: current,
-        note: 'Dupa 18:30, PAUSE_UNTIL_EVENING este o oprire punctuala: hold-ul de azi nu se seteaza, iar urmatorul AUTO poate reporni.',
+        note: 'Dupa 18:30, PAUSE_UNTIL_EVENING este o oprire punctuala: hold-ul de azi nu se seteaza, iar cron-ul nu reporneste.',
+        skip: false,
       };
     }
     const already = current === today;
@@ -203,18 +208,24 @@ function resolveDispatch(mode, parts, holdDate) {
       storedHoldDate: today,
       note: already
         ? 'Hold-ul pentru azi este deja setat. Opresc (idempotent).'
-        : 'Hold pana la 18:30 Europe/Bucharest in ' + today + '. Cron-urile de dinainte de 18:30 nu repornesc.',
+        : 'Hold pana la 18:30 Europe/Bucharest in ' + today + '. Cron-urile de dinainte de 18:30 nu pornesc.',
+      skip: false,
     };
   }
 
   const action = decide(parts, current);
   const stale = !!(current && (current < today || (current === today && !beforeEvening)));
+  // Cron-ul nu are program zilnic. Comuta doar ca sa reia un hold expirat.
+  const skip = eventName === 'schedule' && !stale;
   return {
     action,
     persist: stale,
     persistRequired: false,
     storedHoldDate: null,
-    note: stale ? 'Hold-ul a expirat. Il sterg si aplic programul.' : null,
+    note: stale
+      ? 'Hold-ul a expirat. Il sterg si reiau anunturile.'
+      : (skip ? 'Fara hold de reluat. Cron-ul nu comuta anunturile.' : null),
+    skip,
   };
 }
 

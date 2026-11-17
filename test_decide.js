@@ -2,7 +2,8 @@
 /**
  * Verifica decide() pentru orice minut, hold-ul pana la 18:30, si ca
  * cron-urile din schedule.yml (timezone Europe/Bucharest) acopera
- * 11:00 / 18:30 / 01:00 chiar daca GitHub intarzie ~55 min.
+ * doar reluarea de la 18:30 dupa un hold, chiar daca GitHub intarzie ~55 min.
+ * Fara hold, cron-ul nu comuta. Nimic nu opreste anunturile dupa un program.
  * Rulare: node test_decide.js
  */
 'use strict';
@@ -17,6 +18,7 @@ const {
   resolveDispatch,
   parseHoldDocument,
 } = require('./decide_action');
+const { isStartAllowed, isBlockedFromStart, START_ALLOWLIST } = require('./targets');
 
 const SAMPLES = [
   // 3 nov — fereastra larga: doar 11:00–14:00 si 19:00–01:00
@@ -37,7 +39,9 @@ const SAMPLES = [
   '2026-11-06 18:45',
   '2026-11-06 19:05',
 
-  // 16 nov incolo — continuu 11:00–01:00, fara pauza la 14:00
+  // 16 nov incolo — 24h pornit, fara fereastra de noapte
+  '2026-11-16 07:59',
+  '2026-11-16 08:00',
   '2026-11-16 10:59',
   '2026-11-16 11:00',
   '2026-11-16 14:00',
@@ -80,12 +84,16 @@ const SAMPLES = [
   '2026-11-16 00:59',
   '2026-11-16 01:00',
 
-  // Inainte de 16 nov programul vechi ramane 18:30; dupa, 11:00 inclusiv vara
+  // Inainte de 16 nov programul vechi ramane 18:30; dupa, pornit toata ziua
   '2026-07-15 11:00',
   '2026-07-15 18:29',
   '2026-07-15 18:30',
+  '2026-12-01 07:59',
+  '2026-12-01 08:00',
   '2026-12-01 10:59',
   '2026-12-01 11:00',
+  '2027-07-15 07:59',
+  '2027-07-15 08:00',
   '2027-07-15 10:59',
   '2027-07-15 11:00',
   '2027-07-15 14:00',
@@ -108,7 +116,9 @@ const EXPECTED = {
   '2026-11-06 18:45': 'START',
   '2026-11-06 19:05': 'START',
 
-  '2026-11-16 10:59': 'PAUSE',
+  '2026-11-16 07:59': 'START',
+  '2026-11-16 08:00': 'START',
+  '2026-11-16 10:59': 'START',
   '2026-11-16 11:00': 'START',
   '2026-11-16 14:00': 'START',
   '2026-11-16 18:00': 'START',
@@ -123,7 +133,7 @@ const EXPECTED = {
   '2026-11-07 01:00': 'PAUSE',
   '2026-11-07 11:10': 'START',
   '2026-11-16 18:35': 'START',
-  '2026-11-17 01:05': 'PAUSE',
+  '2026-11-17 01:05': 'START',
 
   '2026-11-02 00:00': 'START',
   '2026-11-02 00:59': 'START',
@@ -147,14 +157,18 @@ const EXPECTED = {
   '2026-11-15 23:59': 'START',
   '2026-11-16 00:00': 'START',
   '2026-11-16 00:59': 'START',
-  '2026-11-16 01:00': 'PAUSE',
+  '2026-11-16 01:00': 'START',
 
   '2026-07-15 11:00': 'PAUSE',
   '2026-07-15 18:29': 'PAUSE',
   '2026-07-15 18:30': 'START',
-  '2026-12-01 10:59': 'PAUSE',
+  '2026-12-01 07:59': 'START',
+  '2026-12-01 08:00': 'START',
+  '2026-12-01 10:59': 'START',
   '2026-12-01 11:00': 'START',
-  '2027-07-15 10:59': 'PAUSE',
+  '2027-07-15 07:59': 'START',
+  '2027-07-15 08:00': 'START',
+  '2027-07-15 10:59': 'START',
   '2027-07-15 11:00': 'START',
   '2027-07-15 14:00': 'START',
 };
@@ -185,8 +199,7 @@ function spec(y, m, d, H, M) {
     return 'PAUSE';
   }
   if (isNewScheduleDay(y, m, d)) {
-    if (mins >= 11 * 60 || mins < 60) return 'START';
-    return 'PAUSE';
+    return 'START';
   }
   if (mins >= 18 * 60 + 30 || mins < 60) return 'START';
   return 'PAUSE';
@@ -224,7 +237,14 @@ function loadSchedule() {
     if (tz[1] !== 'Europe/Bucharest') throw new Error('timezone gresit pentru ' + m[1] + ': ' + tz[1]);
     crons.push(m[1]);
   }
-  if (crons.length < 8) throw new Error('Prea putine cron-uri in schedule.yml: ' + crons.length);
+  const expected = [
+    '12,42,52 17 * * *',
+    '8,17,27,37,48 18 * * *',
+    '12,47 19 * * *',
+  ];
+  if (crons.join('\n') !== expected.join('\n')) {
+    throw new Error('Cron-urile nu sunt doar reluarea de la 18:30:\n' + crons.join('\n'));
+  }
   return { yml, crons };
 }
 
@@ -352,7 +372,11 @@ assertParts('2026-11-06T23:00:00Z', { year: 2026, month: 11, day: 7, hour: 1, mi
 assertParts('2026-11-06T23:08:00Z', { year: 2026, month: 11, day: 7, hour: 1, minute: 8 });
 assertParts('2026-11-15T22:30:00Z', { year: 2026, month: 11, day: 16, hour: 0, minute: 30 });
 assertParts('2026-11-15T23:00:00Z', { year: 2026, month: 11, day: 16, hour: 1, minute: 0 });
+assertParts('2026-11-16T05:59:00Z', { year: 2026, month: 11, day: 16, hour: 7, minute: 59 });
+assertParts('2026-11-16T06:00:00Z', { year: 2026, month: 11, day: 16, hour: 8, minute: 0 });
 assertParts('2026-11-16T09:00:00Z', { year: 2026, month: 11, day: 16, hour: 11, minute: 0 });
+assertParts('2027-07-15T04:59:00Z', { year: 2027, month: 7, day: 15, hour: 7, minute: 59 });
+assertParts('2027-07-15T05:00:00Z', { year: 2027, month: 7, day: 15, hour: 8, minute: 0 });
 assertParts('2026-11-16T16:30:00Z', { year: 2026, month: 11, day: 16, hour: 18, minute: 30 });
 assertParts('2026-07-15T15:29:00Z', { year: 2026, month: 7, day: 15, hour: 18, minute: 29 });
 assertParts('2026-07-15T15:30:00Z', { year: 2026, month: 7, day: 15, hour: 18, minute: 30 });
@@ -394,6 +418,7 @@ if (wrap < 5) fail('Cronurile de peste miezul noptii sunt la mai putin de 5 minu
 
 for (const s of slots) {
   if (s.h === 3) fail('Ora 03 e evitata (gaura de ora la trecerea la ora de vara): ' + s.h + ':' + s.m);
+  if (s.h < 17 || s.h > 19) fail('Cron in afara reluarii 18:30: ' + s.h + ':' + s.m);
 }
 
 // Cronurile sunt in ora locala. Pe zilele critice, decide == spec.
@@ -455,16 +480,10 @@ function assertLocalDelayCoverage(name, y, m, d, H, M, maxLateMin, holdDate) {
 }
 
 const MAX_LATE = 20;
-assertLocalDelayCoverage('11:00 START 16 nov', 2026, 11, 16, 11, 0, MAX_LATE, null);
-assertLocalDelayCoverage('11:00 cu hold 16 nov', 2026, 11, 16, 11, 0, MAX_LATE, '2026-11-16');
 assertLocalDelayCoverage('18:30 reluare 16 nov', 2026, 11, 16, 18, 30, MAX_LATE, null);
 assertLocalDelayCoverage('18:30 cu hold 16 nov', 2026, 11, 16, 18, 30, MAX_LATE, '2026-11-16');
-assertLocalDelayCoverage('01:00 PAUSE 17 nov', 2026, 11, 17, 1, 0, MAX_LATE, null);
-assertLocalDelayCoverage('01:00 PAUSE 7 nov (dupa BF)', 2026, 11, 7, 1, 0, MAX_LATE, null);
 assertLocalDelayCoverage('18:30 START BF 5 nov', 2026, 11, 5, 18, 30, MAX_LATE, null);
-assertLocalDelayCoverage('11:00 START vara 2027', 2027, 7, 15, 11, 0, MAX_LATE, null);
 assertLocalDelayCoverage('18:30 vara 2027', 2027, 7, 15, 18, 30, MAX_LATE, '2027-07-15');
-assertLocalDelayCoverage('01:00 PAUSE vara 2027', 2027, 7, 16, 1, 0, MAX_LATE, null);
 
 // Daca GitHub sarea tot ce e inainte de 17:00 RO (cum s-a intamplat in 10–15 nov),
 // rularea de la 17:xx inca prinde fereastra, iar hold-ul tine pauza pana la 18:30.
@@ -485,6 +504,24 @@ for (const s of afternoon) {
     if (held !== 'PAUSE') fail(label + ' cu hold ar trebui PAUSE, este ' + held);
   } else if (held !== 'START') {
     fail(label + ' cu hold, dupa 18:30, ar trebui START, este ' + held);
+  }
+}
+
+// Niciun cron nu opreste anunturile. Fara hold nu comuta. Cu hold, inainte
+// de 18:30 nu comuta (pauza manuala ramane); la si dupa 18:30 doar reia.
+for (const [y, m, d] of [[2026, 11, 17], [2026, 12, 1], [2027, 7, 15]]) {
+  for (const slot of slots) {
+    const label = labelOf(y, m, d, slot.h, slot.m);
+    const parts = bucharestParts(label);
+    const open = resolveDispatch('AUTO', parts, null, 'schedule');
+    if (!open.skip) fail(label + ' fara hold ar comuta pe cron');
+    const heldRun = resolveDispatch('AUTO', parts, labelOf(y, m, d, 0, 0).slice(0, 10), 'schedule');
+    const mins = slot.h * 60 + slot.m;
+    if (mins < 18 * 60 + 30) {
+      if (!heldRun.skip) fail(label + ' cu hold inainte de 18:30 nu trebuie sa opreasca din cron');
+    } else if (heldRun.skip || heldRun.action !== 'START') {
+      fail(label + ' cu hold la/dupa 18:30 trebuie sa reia, este ' + heldRun.action + ' skip=' + heldRun.skip);
+    }
   }
 }
 
@@ -515,7 +552,7 @@ for (const [y, m, d, off] of [
   [2027, 7, 15, 3],
   [2027, 3, spring2027, 3],
 ]) {
-  for (const [H, M] of [[11, 0], [18, 30]]) {
+  for (const [H, M] of [[8, 0], [18, 30]]) {
     if (!matchesOffset(y, m, d, H, M, off)) {
       fail(`${labelOf(y, m, d, H, M)} nu cade pe UTC+${off}`);
     }
@@ -523,8 +560,10 @@ for (const [y, m, d, off] of [
 }
 if (!matchesOffset(2026, 11, 17, 1, 0, 2)) fail('01:00 RO 17 nov 2026 nu e UTC+2');
 if (!matchesOffset(2027, 7, 16, 1, 0, 3)) fail('01:00 RO 16 iul 2027 nu e UTC+3');
-// In dimineata schimbarii la ora de vara, 01:00 inca e UTC+2, 11:00 e deja UTC+3.
+// In dimineata schimbarii la ora de vara, 01:00 inca e UTC+2, 08:00 e deja UTC+3.
 if (!matchesOffset(2027, 3, spring2027, 1, 0, 2)) fail('01:00 in dimineata de primavara ar trebui UTC+2');
+if (!matchesOffset(2027, 3, spring2027, 8, 0, 3)) fail('08:00 in dimineata de primavara ar trebui UTC+3');
+if (!matchesOffset(2026, 11, 18, 8, 0, 2)) fail('08:00 RO 18 nov 2026 nu e 06:00 UTC');
 
 function utcForLocal(y, m, d, H, M) {
   for (const off of [2, 3]) {
@@ -538,10 +577,10 @@ function at(label) {
   return bucharestParts(label);
 }
 
-function expectDispatch(name, mode, label, hold, fields) {
+function expectDispatch(name, mode, label, hold, fields, eventName) {
   let result;
   try {
-    result = resolveDispatch(mode, at(label), hold);
+    result = resolveDispatch(mode, at(label), hold, eventName);
   } catch (e) {
     fail(name + ' a aruncat: ' + e.message);
     return;
@@ -557,15 +596,32 @@ function expectDispatch(name, mode, label, hold, fields) {
 }
 
 expectDispatch('AUTO 14:00 fara hold', 'AUTO', '2026-11-16 14:00', null, {
-  action: 'START', persist: false, persistRequired: false,
+  action: 'START', persist: false, persistRequired: false, skip: false,
 });
-expectDispatch('AUTO 10:59', 'AUTO', '2026-11-16 10:59', null, { action: 'PAUSE', persist: false });
-expectDispatch('AUTO 11:00', 'AUTO', '2026-11-16 11:00', null, { action: 'START', persist: false });
-expectDispatch('AUTO 01:00', 'AUTO', '2026-11-17 01:00', null, { action: 'PAUSE', persist: false });
+expectDispatch('AUTO 07:59', 'AUTO', '2026-11-16 07:59', null, { action: 'START', persist: false, skip: false });
+expectDispatch('AUTO 08:00', 'AUTO', '2026-11-16 08:00', null, { action: 'START', persist: false, skip: false });
+expectDispatch('AUTO 11:00 inca in fereastra', 'AUTO', '2026-11-16 11:00', null, { action: 'START', persist: false });
+expectDispatch('AUTO 01:00', 'AUTO', '2026-11-17 01:00', null, { action: 'START', persist: false, skip: false });
 expectDispatch('AUTO 00:59', 'AUTO', '2026-11-17 00:59', null, { action: 'START', persist: false });
+expectDispatch('cron 01:00 fara hold nu opreste', 'AUTO', '2026-11-17 01:00', null, {
+  action: 'START', skip: true, persist: false,
+}, 'schedule');
+expectDispatch('cron 08:00 fara hold nu porneste', 'AUTO', '2026-11-17 08:00', null, {
+  skip: true, persist: false,
+}, 'schedule');
+expectDispatch('cron inainte de 18:30 cu hold nu comuta', 'AUTO', '2026-11-16 17:42', '2026-11-16', {
+  action: 'PAUSE', skip: true, persist: false,
+}, 'schedule');
+expectDispatch('cron 18:30 cu hold reia', 'AUTO', '2026-11-16 18:37', '2026-11-16', {
+  action: 'START', skip: false, persist: true, storedHoldDate: null,
+}, 'schedule');
+expectDispatch('cron 19:12 fara hold nu porneste', 'AUTO', '2026-11-16 19:12', null, {
+  skip: true,
+}, 'schedule');
 expectDispatch('hold tine 14:00', 'AUTO', '2026-11-16 14:00', '2026-11-16', {
   action: 'PAUSE', persist: false, persistRequired: false,
 });
+expectDispatch('hold tine 08:00', 'AUTO', '2026-11-16 08:00', '2026-11-16', { action: 'PAUSE', persist: false });
 expectDispatch('hold tine 11:00', 'AUTO', '2026-11-16 11:00', '2026-11-16', { action: 'PAUSE', persist: false });
 expectDispatch('hold tine 18:29', 'AUTO', '2026-11-16 18:29', '2026-11-16', { action: 'PAUSE', persist: false });
 expectDispatch('hold expira 18:30', 'AUTO', '2026-11-16 18:30', '2026-11-16', {
@@ -687,7 +743,13 @@ expectRun('script PAUSE nu scrie', {
 }, { action: 'PAUSE', persist: 'false', persist_required: 'false' }, undefined);
 expectRun('script dupa 18:30 nu tine', {
   MODE: 'PAUSE_UNTIL_EVENING', WHEN: '2026-11-16 19:00', HOLD_JSON: 'none',
-}, { action: 'PAUSE', persist: 'false' }, undefined);
+}, { action: 'PAUSE', persist: 'false', skip: 'false' }, undefined);
+expectRun('script cron fara hold nu comuta', {
+  MODE: 'AUTO', WHEN: '2026-11-17 01:00', HOLD_JSON: 'none', EVENT: 'schedule',
+}, { action: 'START', persist: 'false', skip: 'true' }, undefined);
+expectRun('script cron 18:37 reia hold', {
+  MODE: 'AUTO', WHEN: '2026-11-16 18:37', HOLD_JSON: holdToday, EVENT: 'schedule',
+}, { action: 'START', persist: 'true', persist_required: 'false', skip: 'false' }, null);
 
 const badMode = runPersist({ MODE: 'NOPE', WHEN: '2026-11-16 12:00', HOLD_JSON: 'none' });
 if (badMode.status === 0) fail('modul invalid trebuie sa iasa cu eroare');
@@ -706,6 +768,10 @@ if (!yml.includes('name: emag-hold')) fail('artifactul de hold lipseste');
 if (!yml.includes('actions: write')) fail('workflow-ul nu cere actions: write');
 if (!yml.includes('node persist_hold.js')) fail('workflow-ul nu ruleaza persist_hold.js');
 if (yml.includes('emag_toggle.js ${{ inputs.action }}')) fail('inputs.action nu trebuie sa ajunga direct la toggle');
+if (!yml.includes("steps.act.outputs.skip != 'true'")) fail('cron-ul fara hold tot ar comuta anunturile');
+if (yml.includes("cron: '7,18 1 * * *'") || yml.includes("cron: '7,18 8 * * *'")) {
+  fail('cron-ul de STOP 01:00 sau START 08:00 inca exista');
+}
 
 console.log('\nCron Europe/Bucharest → UTC (zi de referinta):');
 const winter = [2026, 11, 16];
@@ -720,6 +786,35 @@ for (const s of uniqueSlots) {
   console.log(`  ${pad(s.h)}:${pad(s.m)} RO   iarna ${pad(wH)}:${pad(s.m)}Z (UTC+${w})   vara ${pad(uH)}:${pad(s.m)}Z (UTC+${u})`);
 }
 console.log(`\n${uniqueSlots.length} declansari locale / zi, ${crons.length} expresii cron.`);
+
+const targets = require('./targets');
+const allow = new Set(START_ALLOWLIST);
+for (const name of [
+  'Imprimante_oct26-ian27',
+  'Imprimante_exact_nov26-ian27',
+  'Cartuse_Canon_auto_nov26-ian27',
+  'Canon printere vs competitori',
+]) {
+  if (!isStartAllowed(name)) fail('allowlist nu porneste ' + name);
+}
+if (isStartAllowed('Imprimante others')) fail('Imprimante others nu trebuie pornit');
+if (isStartAllowed('first')) fail('START nu porneste first');
+if (isStartAllowed('Cartus PG-585 / CL-586_Printers TS6550i')) fail('Cartus * nu trebuie pornit');
+if (isStartAllowed('Cartus_vechi')) fail('Cartus_ nu trebuie pornit');
+if (!isBlockedFromStart('Imprimante others')) fail('Imprimante others trebuie blocat');
+if (!isBlockedFromStart('Cartus GI-45_Printer GX1040')) fail('Cartus cu spatiu trebuie blocat');
+if (!isBlockedFromStart('Cartus_PG')) fail('Cartus_ trebuie blocat');
+if (isBlockedFromStart('Cartuse_Canon_auto_nov26-ian27')) fail('Cartuse_Canon nu e Cartus_*');
+if (allow.size !== 4) fail('allowlist trebuie sa aiba 4 nume');
+for (const t of targets) {
+  if (!isStartAllowed(t.adSet)) fail('tinta configurata nu e in allowlist: ' + t.adSet);
+  if (!/campaign-manager\/(632815|648722|652949|634320)/.test(t.url)) {
+    fail('campanie schimbata: ' + t.url);
+  }
+}
+if (targets.some(t => String(t.adSet).toLowerCase() === 'first')) {
+  fail('o tinta inca foloseste first');
+}
 
 console.log('');
 if (failed) {
